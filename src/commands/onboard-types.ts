@@ -44,6 +44,7 @@ export type AuthChoice =
   | "xai-api-key"
   | "qianfan-api-key"
   | "custom-api-key"
+  | "redpill-api-key"
   | "skip";
 export type AuthChoiceGroupId =
   | "openai"
@@ -108,6 +109,7 @@ export type OnboardOptions = {
   syntheticApiKey?: string;
   veniceApiKey?: string;
   togetherApiKey?: string;
+  redpillApiKey?: string;
   opencodeZenApiKey?: string;
   xaiApiKey?: string;
   qianfanApiKey?: string;

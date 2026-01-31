@@ -3,6 +3,7 @@ export {
   SYNTHETIC_DEFAULT_MODEL_REF,
 } from "../agents/synthetic-models.js";
 export { VENICE_DEFAULT_MODEL_ID, VENICE_DEFAULT_MODEL_REF } from "../agents/venice-models.js";
+export { REDPILL_DEFAULT_MODEL_REF } from "../agents/redpill-models.js";
 export {
   applyAuthProfileConfig,
   applyCloudflareAiGatewayConfig,
@@ -19,6 +20,8 @@ export {
   applyMoonshotProviderConfigCn,
   applyOpenrouterConfig,
   applyOpenrouterProviderConfig,
+  applyRedpillConfig,
+  applyRedpillProviderConfig,
   applySyntheticConfig,
   applySyntheticProviderConfig,
   applyTogetherConfig,
@@ -61,6 +64,7 @@ export {
   setMoonshotApiKey,
   setOpencodeZenApiKey,
   setOpenrouterApiKey,
+  setRedpillApiKey,
   setSyntheticApiKey,
   setTogetherApiKey,
   setVeniceApiKey,
