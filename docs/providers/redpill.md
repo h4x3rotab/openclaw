@@ -103,47 +103,48 @@ List all available models:
 clawdbot models list | grep redpill
 ```
 
-## GPU TEE Models (18 Total)
+## GPU TEE Models (19 Total)
 
 All models run in hardware-secured GPU TEE environments with cryptographic attestation.
 
 ### Phala Network (10 models)
 
-| Model ID | Name | Context | Max Output | Features |
-|----------|------|---------|------------|----------|
-| `z-ai/glm-4.7-flash` | GLM 4.7 Flash | 203k | 128k | General, multilingual |
-| `qwen/qwen3-embedding-8b` | Qwen3 Embedding 8B | 33k | 512 | Embeddings |
-| `phala/uncensored-24b` | Uncensored 24B | 33k | 8k | Uncensored |
-| `deepseek/deepseek-v3.2` | DeepSeek v3.2 | 164k | 8k | **Default**, reasoning |
-| `qwen/qwen3-vl-30b-a3b-instruct` | Qwen3 VL 30B | 128k | 8k | Vision |
-| `sentence-transformers/all-minilm-l6-v2` | All-MiniLM-L6-v2 | 512 | 512 | Embeddings |
-| `qwen/qwen-2.5-7b-instruct` | Qwen 2.5 7B Instruct | 33k | 8k | General |
-| `google/gemma-3-27b-it` | Gemma 3 27B IT | 54k | 8k | General |
-| `openai/gpt-oss-120b` | GPT OSS 120B | 131k | 8k | General |
-| `openai/gpt-oss-20b` | GPT OSS 20B | 131k | 8k | General |
+| Model ID | Name | Context | $/M In | $/M Out | Features |
+|----------|------|---------|--------|---------|----------|
+| `z-ai/glm-4.7-flash` | GLM 4.7 Flash | 203k | $0.10 | $0.43 | General, multilingual |
+| `qwen/qwen3-embedding-8b` | Qwen3 Embedding 8B | 33k | $0.01 | $0.00 | Embeddings |
+| `phala/uncensored-24b` | Uncensored 24B | 33k | $0.20 | $0.90 | Uncensored |
+| `deepseek/deepseek-v3.2` | DeepSeek v3.2 | 164k | $0.27 | $0.40 | **Default**, reasoning |
+| `qwen/qwen3-vl-30b-a3b-instruct` | Qwen3 VL 30B | 128k | $0.20 | $0.70 | Vision |
+| `sentence-transformers/all-minilm-l6-v2` | All-MiniLM-L6-v2 | 512 | $0.005 | $0.00 | Embeddings |
+| `qwen/qwen-2.5-7b-instruct` | Qwen 2.5 7B Instruct | 33k | $0.04 | $0.10 | General |
+| `google/gemma-3-27b-it` | Gemma 3 27B IT | 54k | $0.11 | $0.40 | General |
+| `openai/gpt-oss-120b` | GPT OSS 120B | 131k | $0.10 | $0.49 | General |
+| `openai/gpt-oss-20b` | GPT OSS 20B | 131k | $0.04 | $0.15 | General |
 
 ### Tinfoil (4 models)
 
-| Model ID | Name | Context | Max Output | Features |
-|----------|------|---------|------------|----------|
-| `moonshotai/kimi-k2-thinking` | Kimi K2 Thinking | 262k | 8k | Reasoning |
-| `deepseek/deepseek-r1-0528` | DeepSeek R1 | 164k | 8k | Reasoning |
-| `qwen/qwen3-coder-480b-a35b-instruct` | Qwen3 Coder 480B | 262k | 8k | Code |
-| `meta-llama/llama-3.3-70b-instruct` | Llama 3.3 70B Instruct | 131k | 8k | General |
+| Model ID | Name | Context | $/M In | $/M Out | Features |
+|----------|------|---------|--------|---------|----------|
+| `moonshotai/kimi-k2-thinking` | Kimi K2 Thinking | 262k | $2.00 | $2.00 | Reasoning |
+| `deepseek/deepseek-r1-0528` | DeepSeek R1 | 164k | $2.00 | $2.00 | Reasoning |
+| `qwen/qwen3-coder-480b-a35b-instruct` | Qwen3 Coder 480B | 262k | $2.00 | $2.00 | Code |
+| `meta-llama/llama-3.3-70b-instruct` | Llama 3.3 70B Instruct | 131k | $2.00 | $2.00 | General |
 
-### Chutes (1 model)
+### Chutes (2 models)
 
-| Model ID | Name | Context | Max Output | Features |
-|----------|------|---------|------------|----------|
-| `minimax/minimax-m2.1` | MiniMax M2.1 | 197k | 8k | General |
+| Model ID | Name | Context | $/M In | $/M Out | Features |
+|----------|------|---------|--------|---------|----------|
+| `moonshotai/kimi-k2.5` | Kimi K2.5 | 262k | $0.60 | $3.00 | Vision, multimodal |
+| `minimax/minimax-m2.1` | MiniMax M2.1 | 197k | $0.30 | $1.20 | General |
 
 ### Near-AI (3 models)
 
-| Model ID | Name | Context | Max Output | Features |
-|----------|------|---------|------------|----------|
-| `deepseek/deepseek-chat-v3.1` | DeepSeek Chat v3.1 | 164k | 8k | General |
-| `qwen/qwen3-30b-a3b-instruct-2507` | Qwen3 30B Instruct | 262k | 8k | General |
-| `z-ai/glm-4.6` | GLM 4.6 | 203k | 128k | General, multilingual |
+| Model ID | Name | Context | $/M In | $/M Out | Features |
+|----------|------|---------|--------|---------|----------|
+| `deepseek/deepseek-chat-v3.1` | DeepSeek Chat v3.1 | 164k | $1.00 | $2.50 | General |
+| `qwen/qwen3-30b-a3b-instruct-2507` | Qwen3 30B Instruct | 262k | $0.15 | $0.45 | General |
+| `z-ai/glm-4.7` | GLM 4.7 | 131k | $0.85 | $3.30 | General, multilingual |
 
 ## Which Model Should I Use?
 
@@ -153,7 +154,8 @@ All models run in hardware-secured GPU TEE environments with cryptographic attes
 | **Complex reasoning** | `deepseek/deepseek-r1-0528` | Reasoning-optimized with R1 architecture |
 | **Long context reasoning** | `moonshotai/kimi-k2-thinking` | 262k context, reasoning-focused |
 | **Coding** | `qwen/qwen3-coder-480b-a35b-instruct` | Code-specialized, 262k context |
-| **Vision tasks** | `qwen/qwen3-vl-30b-a3b-instruct` | Only vision model, 128k context |
+| **Vision + multimodal** | `moonshotai/kimi-k2.5` | Visual coding, agentic, 262k context |
+| **Vision tasks** | `qwen/qwen3-vl-30b-a3b-instruct` | Vision model, 128k context |
 | **Fast + balanced** | `meta-llama/llama-3.3-70b-instruct` | Llama 3.3, good all-around |
 | **Uncensored** | `phala/uncensored-24b` | No content restrictions |
 | **Embeddings** | `qwen/qwen3-embedding-8b` | Text embeddings |

@@ -757,9 +757,8 @@ export async function applyAuthChoiceApiProviders(
     if (!hasCredential) {
       await params.prompter.note(
         [
-          "Redpill AI provides GPU-TEE protected inference with privacy guarantees.",
+          "Redpill AI provides E2E encrypted models protected by Confidential AI.",
           "Get your API key at: https://redpill.ai/settings/api",
-          "All models run in secure enclaves with verifiable privacy.",
         ].join("\n"),
         "Redpill AI",
       );

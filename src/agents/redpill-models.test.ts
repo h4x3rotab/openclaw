@@ -28,8 +28,8 @@ describe("Redpill Models", () => {
   });
 
   describe("GPU TEE Catalog", () => {
-    it("should have exactly 18 models", () => {
-      expect(REDPILL_GPU_TEE_CATALOG).toHaveLength(18);
+    it("should have exactly 19 models", () => {
+      expect(REDPILL_GPU_TEE_CATALOG).toHaveLength(19);
     });
 
     it("should have 10 Phala models", () => {
@@ -64,17 +64,19 @@ describe("Redpill Models", () => {
       }
     });
 
-    it("should have 1 Chutes model", () => {
-      const chutesModel = "minimax/minimax-m2.1";
+    it("should have 2 Chutes models", () => {
+      const chutesModels = ["moonshotai/kimi-k2.5", "minimax/minimax-m2.1"];
       const catalogIds = REDPILL_GPU_TEE_CATALOG.map((m) => m.id);
-      expect(catalogIds).toContain(chutesModel);
+      for (const id of chutesModels) {
+        expect(catalogIds).toContain(id);
+      }
     });
 
     it("should have 3 Near-AI models", () => {
       const nearModels = [
         "deepseek/deepseek-chat-v3.1",
         "qwen/qwen3-30b-a3b-instruct-2507",
-        "z-ai/glm-4.6",
+        "z-ai/glm-4.7",
       ];
       const catalogIds = REDPILL_GPU_TEE_CATALOG.map((m) => m.id);
       for (const id of nearModels) {
@@ -91,10 +93,13 @@ describe("Redpill Models", () => {
       ]);
     });
 
-    it("should have exactly one vision model", () => {
+    it("should have correct vision models", () => {
       const visionModels = REDPILL_GPU_TEE_CATALOG.filter((m) => m.input.includes("image"));
-      expect(visionModels).toHaveLength(1);
-      expect(visionModels[0].id).toBe("qwen/qwen3-vl-30b-a3b-instruct");
+      expect(visionModels).toHaveLength(2);
+      expect(visionModels.map((m) => m.id).sort()).toEqual([
+        "moonshotai/kimi-k2.5",
+        "qwen/qwen3-vl-30b-a3b-instruct",
+      ]);
     });
 
     it("should have valid structure for all entries", () => {
@@ -105,11 +110,10 @@ describe("Redpill Models", () => {
           reasoning: expect.any(Boolean),
           input: expect.arrayContaining([expect.any(String)]),
           contextWindow: expect.any(Number),
-          maxTokens: expect.any(Number),
+          cost: { input: expect.any(Number), output: expect.any(Number) },
         });
 
         expect(entry.contextWindow).toBeGreaterThan(0);
-        expect(entry.maxTokens).toBeGreaterThan(0);
         expect(entry.input.length).toBeGreaterThan(0);
       }
     });
@@ -124,7 +128,7 @@ describe("Redpill Models", () => {
   describe("discoverRedpillModels", () => {
     it("should convert catalog to model definitions", () => {
       const models = discoverRedpillModels();
-      expect(models).toHaveLength(18);
+      expect(models).toHaveLength(19);
 
       for (const model of models) {
         expect(model).toMatchObject({
@@ -133,14 +137,16 @@ describe("Redpill Models", () => {
           contextWindow: expect.any(Number),
           maxTokens: expect.any(Number),
           cost: {
-            input: 0,
-            output: 0,
+            input: expect.any(Number),
+            output: expect.any(Number),
             cacheRead: 0,
             cacheWrite: 0,
           },
           input: expect.arrayContaining([expect.any(String)]),
           reasoning: expect.any(Boolean),
         });
+        // maxTokens should be 80% of contextWindow
+        expect(model.maxTokens).toBe(Math.floor(model.contextWindow * 0.8));
       }
     });
 
@@ -166,14 +172,16 @@ describe("Redpill Models", () => {
       );
       expect(embeddingModel).toBeDefined();
       expect(embeddingModel?.contextWindow).toBe(512);
-      expect(embeddingModel?.maxTokens).toBe(512);
     });
 
-    it("should have correct z-ai model max tokens", () => {
-      const glm47 = REDPILL_GPU_TEE_CATALOG.find((m) => m.id === "z-ai/glm-4.7-flash");
-      const glm46 = REDPILL_GPU_TEE_CATALOG.find((m) => m.id === "z-ai/glm-4.6");
-      expect(glm47?.maxTokens).toBe(128_000);
-      expect(glm46?.maxTokens).toBe(128_000);
+    it("should have correct cost for tinfoil models", () => {
+      const kimi = REDPILL_GPU_TEE_CATALOG.find((m) => m.id === "moonshotai/kimi-k2-thinking");
+      expect(kimi?.cost).toEqual({ input: 2.0, output: 2.0 });
+    });
+
+    it("should have correct cost for kimi k2.5", () => {
+      const kimi = REDPILL_GPU_TEE_CATALOG.find((m) => m.id === "moonshotai/kimi-k2.5");
+      expect(kimi?.cost).toEqual({ input: 0.6, output: 3.0 });
     });
 
     it("should have correct context windows", () => {
