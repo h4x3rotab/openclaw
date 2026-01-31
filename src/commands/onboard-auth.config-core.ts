@@ -597,7 +597,7 @@ export function applyVeniceConfig(cfg: OpenClawConfig): OpenClawConfig {
  * Apply Redpill provider configuration without changing the default model.
  * Registers Redpill models and sets up the provider, but preserves existing model selection.
  */
-export function applyRedpillProviderConfig(cfg: MoltbotConfig): MoltbotConfig {
+export function applyRedpillProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
   const providers = { ...cfg.models?.providers };
   const existingProvider = providers.redpill;
   const existingModels = Array.isArray(existingProvider?.models) ? existingProvider.models : [];
@@ -651,7 +651,7 @@ export function applyRedpillProviderConfig(cfg: MoltbotConfig): MoltbotConfig {
  * Apply Redpill provider configuration AND set Redpill as the default model.
  * Use this when Redpill is the primary provider choice during onboarding.
  */
-export function applyRedpillConfig(cfg: MoltbotConfig): MoltbotConfig {
+export function applyRedpillConfig(cfg: OpenClawConfig): OpenClawConfig {
   const next = applyRedpillProviderConfig(cfg);
   const existingModel = next.agents?.defaults?.model;
   return {
