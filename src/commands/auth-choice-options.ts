@@ -243,6 +243,11 @@ export function buildAuthChoiceOptions(params: {
     label: "OpenCode Zen (multi-model proxy)",
     hint: "Claude, GPT, Gemini via opencode.ai/zen",
   });
+  options.push({
+    value: "redpill-api-key",
+    label: "Redpill AI API key",
+    hint: "GPU TEE privacy (DeepSeek, Qwen, Llama)",
+  });
   options.push({ value: "minimax-api", label: "MiniMax M2.1" });
   options.push({
     value: "minimax-api-lightning",
