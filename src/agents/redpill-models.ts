@@ -11,7 +11,7 @@
  * Supported TEE providers:
  * - Phala Network (10 models)
  * - Tinfoil (4 models)
- * - Chutes (1 model)
+ * - Chutes (2 models)
  * - Near-AI (3 models)
  *
  * This catalog serves as the source of truth for available GPU TEE models.
@@ -50,17 +50,10 @@ let cacheTimestamp: number | null = null;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 /**
- * Default cost structure (all zeros for GPU TEE models)
- */
-const DEFAULT_COST = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-};
-
-/**
  * GPU TEE model catalog entry
+ *
+ * maxTokens is omitted — computed as 80% of contextWindow.
+ * Cost is per 1M tokens (USD).
  */
 export interface RedpillCatalogEntry {
   id: string;
@@ -68,7 +61,7 @@ export interface RedpillCatalogEntry {
   reasoning: boolean;
   input: ("text" | "image")[];
   contextWindow: number;
-  maxTokens: number;
+  cost: { input: number; output: number };
 }
 
 /**
@@ -77,7 +70,7 @@ export interface RedpillCatalogEntry {
  * Sources:
  * - Phala Network: 10 models
  * - Tinfoil: 4 models
- * - Chutes: 1 model
+ * - Chutes: 2 models
  * - Near-AI: 3 models
  */
 export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
@@ -88,7 +81,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 203_000,
-    maxTokens: 128_000,
+    cost: { input: 0.1, output: 0.43 },
   },
   {
     id: "qwen/qwen3-embedding-8b",
@@ -96,7 +89,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 33_000,
-    maxTokens: 512,
+    cost: { input: 0.01, output: 0 },
   },
   {
     id: "phala/uncensored-24b",
@@ -104,7 +97,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 33_000,
-    maxTokens: 8192,
+    cost: { input: 0.2, output: 0.9 },
   },
   {
     id: "deepseek/deepseek-v3.2",
@@ -112,7 +105,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 164_000,
-    maxTokens: 8192,
+    cost: { input: 0.27, output: 0.4 },
   },
   {
     id: "qwen/qwen3-vl-30b-a3b-instruct",
@@ -120,7 +113,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text", "image"],
     contextWindow: 128_000,
-    maxTokens: 8192,
+    cost: { input: 0.2, output: 0.7 },
   },
   {
     id: "sentence-transformers/all-minilm-l6-v2",
@@ -128,7 +121,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 512,
-    maxTokens: 512,
+    cost: { input: 0.005, output: 0 },
   },
   {
     id: "qwen/qwen-2.5-7b-instruct",
@@ -136,7 +129,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 33_000,
-    maxTokens: 8192,
+    cost: { input: 0.04, output: 0.1 },
   },
   {
     id: "google/gemma-3-27b-it",
@@ -144,7 +137,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 54_000,
-    maxTokens: 8192,
+    cost: { input: 0.11, output: 0.4 },
   },
   {
     id: "openai/gpt-oss-120b",
@@ -152,7 +145,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 131_000,
-    maxTokens: 8192,
+    cost: { input: 0.1, output: 0.49 },
   },
   {
     id: "openai/gpt-oss-20b",
@@ -160,7 +153,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 131_000,
-    maxTokens: 8192,
+    cost: { input: 0.04, output: 0.15 },
   },
 
   // Tinfoil (4 models)
@@ -170,7 +163,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: true,
     input: ["text"],
     contextWindow: 262_000,
-    maxTokens: 8192,
+    cost: { input: 2.0, output: 2.0 },
   },
   {
     id: "deepseek/deepseek-r1-0528",
@@ -178,7 +171,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: true,
     input: ["text"],
     contextWindow: 164_000,
-    maxTokens: 8192,
+    cost: { input: 2.0, output: 2.0 },
   },
   {
     id: "qwen/qwen3-coder-480b-a35b-instruct",
@@ -186,7 +179,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 262_000,
-    maxTokens: 8192,
+    cost: { input: 2.0, output: 2.0 },
   },
   {
     id: "meta-llama/llama-3.3-70b-instruct",
@@ -194,17 +187,25 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 131_000,
-    maxTokens: 8192,
+    cost: { input: 2.0, output: 2.0 },
   },
 
-  // Chutes (1 model)
+  // Chutes (2 models)
+  {
+    id: "moonshotai/kimi-k2.5",
+    name: "Kimi K2.5 (GPU TEE)",
+    reasoning: false,
+    input: ["text", "image"],
+    contextWindow: 262_000,
+    cost: { input: 0.6, output: 3.0 },
+  },
   {
     id: "minimax/minimax-m2.1",
     name: "MiniMax M2.1 (GPU TEE)",
     reasoning: false,
     input: ["text"],
     contextWindow: 197_000,
-    maxTokens: 8192,
+    cost: { input: 0.3, output: 1.2 },
   },
 
   // Near-AI (3 models)
@@ -214,7 +215,7 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 164_000,
-    maxTokens: 8192,
+    cost: { input: 1.0, output: 2.5 },
   },
   {
     id: "qwen/qwen3-30b-a3b-instruct-2507",
@@ -222,15 +223,15 @@ export const REDPILL_GPU_TEE_CATALOG: RedpillCatalogEntry[] = [
     reasoning: false,
     input: ["text"],
     contextWindow: 262_000,
-    maxTokens: 8192,
+    cost: { input: 0.15, output: 0.45 },
   },
   {
-    id: "z-ai/glm-4.6",
-    name: "GLM 4.6 (GPU TEE)",
+    id: "z-ai/glm-4.7",
+    name: "GLM 4.7 (GPU TEE)",
     reasoning: false,
     input: ["text"],
-    contextWindow: 203_000,
-    maxTokens: 128_000,
+    contextWindow: 131_000,
+    cost: { input: 0.85, output: 3.3 },
   },
 ];
 
@@ -242,8 +243,13 @@ function catalogEntryToModelDefinition(entry: RedpillCatalogEntry): ModelDefinit
     id: entry.id,
     name: entry.name,
     contextWindow: entry.contextWindow,
-    maxTokens: entry.maxTokens,
-    cost: DEFAULT_COST,
+    maxTokens: Math.floor(entry.contextWindow * 0.8),
+    cost: {
+      input: entry.cost.input,
+      output: entry.cost.output,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
     input: entry.input,
     reasoning: entry.reasoning,
   };

@@ -91,7 +91,7 @@ const AUTH_CHOICE_GROUP_DEFS: {
   {
     value: "redpill",
     label: "Redpill AI",
-    hint: "GPU TEE privacy (DeepSeek, Qwen, Llama)",
+    hint: "E2E encrypted models with Confidential AI",
     choices: ["redpill-api-key"],
   },
   {
@@ -246,7 +246,7 @@ export function buildAuthChoiceOptions(params: {
   options.push({
     value: "redpill-api-key",
     label: "Redpill AI API key",
-    hint: "GPU TEE privacy (DeepSeek, Qwen, Llama)",
+    hint: "E2E encrypted models with Confidential AI",
   });
   options.push({ value: "minimax-api", label: "MiniMax M2.1" });
   options.push({
