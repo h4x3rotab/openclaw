@@ -10,7 +10,7 @@ CONFIG_FILE="$STATE_DIR/openclaw.json"
 if [ ! -f "$CONFIG_FILE" ]; then
   BOOT_TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
   cat > "$CONFIG_FILE" <<CONF
-{"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false}}
+{"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false},"agents":{"defaults":{"memorySearch":{"provider":"openai","model":"qwen/qwen3-embedding-8b","remote":{"baseUrl":"https://api.redpill.ai/v1"},"fallback":"none"}}}}
 CONF
   echo "Created default config at $CONFIG_FILE (bootstrap token: $BOOT_TOKEN)"
 fi
