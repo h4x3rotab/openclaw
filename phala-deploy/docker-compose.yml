@@ -14,6 +14,15 @@ services:
       - /home/root/.ssh:/root/.ssh:ro
       - openclaw_state:/data/openclaw
       - docker_data:/var/lib/docker
+      # Mount Docker binaries from CVM host (avoids installing docker-ce in image)
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - /usr/bin/dockerd:/usr/bin/dockerd:ro
+      - /usr/bin/containerd:/usr/bin/containerd:ro
+      - /usr/bin/containerd-shim-runc-v2:/usr/bin/containerd-shim-runc-v2:ro
+      - /usr/bin/runc:/usr/bin/runc:ro
+      - /usr/bin/ctr:/usr/bin/ctr:ro
+      - /usr/bin/docker-proxy:/usr/bin/docker-proxy:ro
+      - /usr/libexec/docker:/usr/libexec/docker:ro
     environment:
       OPENCLAW_STATE_DIR: /data/openclaw
       NODE_ENV: production
