@@ -9,6 +9,16 @@ RUN apt-get update && \
       lsb-release sudo && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Docker static binaries + compose plugin (~80MB vs ~280MB for docker-ce)
+ARG DOCKER_VERSION=27.5.1
+ARG COMPOSE_VERSION=2.32.4
+RUN mkdir -p /usr/local/lib/docker/cli-plugins && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" | \
+    tar xz --strip-components=1 -C /usr/local/bin && \
+    curl -fsSL "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+      -o /usr/local/lib/docker/cli-plugins/docker-compose && \
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
 # SSH config: permit root login with keys
 RUN mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
