@@ -200,7 +200,9 @@
 - Deploy branch: `phala-deploy` (based on tag `v2026.1.29` + Redpill cherry-pick + fixes). Repo: `git@github.com:h4x3rotab/openclaw.git`.
 - Phala compose does **not** support `build:`; images must be pre-built and pushed to a registry (e.g. Docker Hub). Use `image:` in compose.
 - To update an existing CVM, use `phala deploy --cvm-id <uuid>` (the UUID, not the name). `--name` only works for new CVMs.
-- DinD inside the CVM requires `--storage-driver=vfs` and `--iptables=false` for dockerd (overlay-on-overlay and nftables fail inside the TEE VM).
+- DinD inside the CVM requires `--storage-driver=vfs` for dockerd (overlay-on-overlay fails inside the TEE VM).
+- iptables: the CVM kernel does **not** support `nf_tables`. Ubuntu 24.04 defaults iptables to the nft backend, which fails with "Could not fetch rule set generation id: Invalid argument". Fix: `update-alternatives --set iptables /usr/sbin/iptables-legacy` in Dockerfile. With iptables-legacy, Docker networking (bridge NAT) works; ip6tables warnings are harmless (kernel lacks IPv6 nat/filter modules).
+- Entrypoint must clean stale PID files (`rm -f /var/run/docker.pid /var/run/containerd/containerd.pid`) before starting dockerd, otherwise container restarts fail with "process with PID N is still running".
 - Gateway `--bind lan` binds to `0.0.0.0`; set `gateway.bind=lan` in config (CLI `--bind` flag may not override config defaults reliably via `exec` entrypoints).
 - Bootstrap entrypoint must seed `openclaw.json` with `gateway.mode=local`, `gateway.bind=lan`, and `gateway.auth.token` for the gateway to start unattended.
 - Entrypoint starts SSH before dockerd so SSH is always available for debugging, even if dockerd fails.
