@@ -2,10 +2,10 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Layer 1: System packages + Docker CE + openssh-server
+# Layer 1: System packages + Docker CE (no build-essential here)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg git bash tmux build-essential openssh-server unzip \
+      ca-certificates curl gnupg git bash tmux openssh-server unzip \
       lsb-release sudo && \
     # Docker CE repo
     install -m 0755 -d /etc/apt/keyrings && \
@@ -17,7 +17,6 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-compose-plugin && \
-    # Cleanup
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # SSH config: permit root login with keys
@@ -42,8 +41,13 @@ RUN NONINTERACTIVE=1 su - linuxbrew -c \
 ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
 ENV PATH="${HOMEBREW_PREFIX}/bin:${HOMEBREW_PREFIX}/sbin:${PATH}"
 
-# Layer 5: Install openclaw from npm (no source tree needed)
-RUN npm install -g @h4x3rotab/openclaw@latest
+# Layer 5: Install build-essential, npm install openclaw, then purge build tools + cache
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    npm install -g @h4x3rotab/openclaw@latest && \
+    apt-get purge -y --auto-remove build-essential && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /root/.npm /tmp/* /usr/include
 
 # Layer 6: Shell environment
 RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc && \
