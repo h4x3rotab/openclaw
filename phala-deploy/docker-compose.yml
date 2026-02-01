@@ -1,6 +1,6 @@
 services:
   openclaw:
-    image: h4x3rotab/openclaw-cvm@sha256:9cbd13e9910fa3e2387625f343d8472f685fc8645e65991e4228756a9e14c631
+    image: h4x3rotab/openclaw-cvm@sha256:3b6b3f50cbc8afe648fb45d321529e25d2f8862b0cf64d0599719b40a515c04e
     # For local builds, uncomment below and comment out image:
     # build:
     #   context: ..
@@ -14,15 +14,6 @@ services:
       - /home/root/.ssh:/root/.ssh:ro
       - openclaw_state:/data/openclaw
       - docker_data:/var/lib/docker
-      # Mount Docker binaries from CVM host (avoids installing docker-ce in image)
-      - /usr/bin/docker:/usr/bin/docker:ro
-      - /usr/bin/dockerd:/usr/bin/dockerd:ro
-      - /usr/bin/containerd:/usr/bin/containerd:ro
-      - /usr/bin/containerd-shim-runc-v2:/usr/bin/containerd-shim-runc-v2:ro
-      - /usr/bin/runc:/usr/bin/runc:ro
-      - /usr/bin/ctr:/usr/bin/ctr:ro
-      - /usr/bin/docker-proxy:/usr/bin/docker-proxy:ro
-      - /usr/libexec/docker:/usr/libexec/docker:ro
     environment:
       OPENCLAW_STATE_DIR: /data/openclaw
       NODE_ENV: production
