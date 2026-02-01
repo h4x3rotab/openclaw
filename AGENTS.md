@@ -184,3 +184,36 @@
 - Publish: `npm publish --access public --otp="<otp>"` (run from the package dir).
 - Verify without local npmrc side effects: `npm view <pkg> version --userconfig "$(mktemp)"`.
 - Kill the tmux session after publish.
+
+## Phala Cloud Deployment
+- Deploy: `cd phala-deploy && phala deploy -n openclaw-dev -c docker-compose.yml -t tdx.medium --dev-os --wait`.
+- `phala ssh` connects to the **VM** (port 22), not the container. To reach the container SSH (port 1022), construct the hostname manually: `<app_id>-1022.<gateway>.phala.network` (no `_.` prefix; `_.` is only for VM port 22).
+- Helper scripts: `phala-deploy/cvm-exec '<command>'` for non-interactive commands; `phala-deploy/cvm-ssh` for interactive SSH (forces TTY).
+- From-source build inside CVM: follow README — `pnpm install`, then `pnpm ui:build`, then `pnpm build`, then `pnpm openclaw <command>`.
+- Do **not** use `npm link` — use `pnpm openclaw` for the dev CLI.
+- Gateway requires `gateway.auth.token` configured before it will start.
+- Backgrounding over non-interactive SSH is unreliable; use tmux inside the CVM.
+- Ubuntu 22.04 base is bare: install `unzip` (for bun), `tmux`, and use nodesource repo for Node 22 (default apt gives Node 12).
+- When adding new provider commits, check **both** the type definitions **and** the options wiring (`buildAuthChoiceOptions` must have a matching entry for every choice in `AUTH_CHOICE_GROUP_DEFS`).
+- Current CVM: `openclaw-dev`, app ID `<app_id>`, gateway `<gateway>`.
+- Dashboard: `https://cloud.phala.com/dashboard/cvms/<cvm-uuid>`.
+- Deploy branch: `phala-deploy` (based on tag `v2026.1.29` + Redpill cherry-pick + fixes). Repo: `git@github.com:h4x3rotab/openclaw.git`.
+- Phala compose does **not** support `build:`; images must be pre-built and pushed to a registry (e.g. Docker Hub). Use `image:` in compose.
+- To update an existing CVM, use `phala deploy --cvm-id <uuid>` (the UUID, not the name). `--name` only works for new CVMs.
+- DinD inside the CVM requires `--storage-driver=vfs` and `--iptables=false` for dockerd (overlay-on-overlay and nftables fail inside the TEE VM).
+- Gateway `--bind lan` binds to `0.0.0.0`; set `gateway.bind=lan` in config (CLI `--bind` flag may not override config defaults reliably via `exec` entrypoints).
+- Bootstrap entrypoint must seed `openclaw.json` with `gateway.mode=local`, `gateway.bind=lan`, and `gateway.auth.token` for the gateway to start unattended.
+- Entrypoint starts SSH before dockerd so SSH is always available for debugging, even if dockerd fails.
+- Pin images by digest (not `latest`) in compose to guarantee dstack sees a change on deploy. After `phala deploy --cvm-id`, dstack pulls the new image in the background while the old container keeps serving. Wait a few minutes before checking — don't assume the update failed just because the old container is still running.
+- When restoring config from backup, `cvm-scp push` places files inside a subdirectory (e.g. `/data/openclaw/.openclaw/`); flatten with `cp -a ... && rm -rf`. Also patch `gateway.bind` to `lan` since the old config likely has `loopback`.
+- Docker image: `h4x3rotab/openclaw-cvm:latest` on Docker Hub. Rebuild: `docker build -f phala-deploy/Dockerfile -t h4x3rotab/openclaw-cvm:latest .` from repo root, then `docker push`.
+- npm package: published as `@h4x3rotab/openclaw` on npm. The Dockerfile installs via `npm install -g @h4x3rotab/openclaw@latest` instead of building from source. To republish: bump version in `package.json`, `pnpm build && pnpm ui:install && pnpm ui:build`, then `npm publish --access public`.
+- `node-llama-cpp` has been removed from `optionalDependencies`. Local embeddings use the Redpill API (`qwen/qwen3-embedding-8b`) instead. The `src/memory/embeddings.ts` code gracefully handles missing `node-llama-cpp` (lazy `import()` with fallback).
+- Memory search embedding config: set `agents.defaults.memorySearch.provider=openai`, `model=qwen/qwen3-embedding-8b`, `remote.baseUrl=https://api.redpill.ai/v1`, `remote.apiKey=<key>`, `fallback=none`. The OpenAI embedding provider supports any OpenAI-compatible endpoint via `remote.baseUrl`.
+- Redpill embedding models available: `qwen/qwen3-embedding-8b` (8B, 33K context, $0.01/1M input), `sentence-transformers/all-minilm-l6-v2` (384-dim, 512 context, $0.000005/1M).
+- Auto-update is disabled in CVM bootstrap config (`update.checkOnStart=false`) since the update system hardcodes the `openclaw` package name. Updates happen via Docker image rebuilds.
+- Docker image does **not** include Docker CE binaries. They are bind-mounted from the CVM host via `docker-compose.yml` volumes (all static Go binaries: `docker`, `dockerd`, `containerd`, `runc`, `ctr`, `containerd-shim-runc-v2`, `docker-proxy`, `/usr/libexec/docker`). This saves ~280 MB.
+- Dockerfile optimization: `build-essential` is installed, used for `npm install`, then purged in the same `RUN` layer (along with npm cache and `/usr/include`) to avoid Docker layer bloat. Never split install and purge across layers.
+- Image size history: 3.14 GB (from-source) → 3.02 GB (npm install) → 1.81 GB (drop llama-cpp) → 1.34 GB (purge build tools) → 1.06 GB (mount Docker from host).
+- Backup config lives in `phala-deploy/backup/.openclaw/` (not committed — contains credentials). Push to CVM via `cvm-scp`.
+- Phala CLI suggestions: `phala-deploy/PHALA_CLI_SUGGESTIONS.md`.
