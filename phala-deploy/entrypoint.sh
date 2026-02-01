@@ -22,8 +22,11 @@ chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 /usr/sbin/sshd
 echo "SSH daemon started."
 
+# Clean up stale PID files from previous container restarts
+rm -f /var/run/docker.pid /var/run/containerd/containerd.pid
+
 # Start Docker daemon in background (best-effort, not critical for gateway)
-dockerd --host=unix:///var/run/docker.sock --storage-driver=vfs --iptables=false &
+dockerd --host=unix:///var/run/docker.sock --storage-driver=vfs &
 DOCKERD_PID=$!
 
 echo "Waiting for Docker daemon..."
