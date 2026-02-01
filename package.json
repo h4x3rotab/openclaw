@@ -1,5 +1,5 @@
 {
-  "name": "openclaw",
+  "name": "@h4x3rotab/openclaw",
   "version": "2026.2.3",
   "description": "WhatsApp gateway CLI (Baileys web) with Pi RPC agent",
   "keywords": [],
@@ -150,6 +150,9 @@
     "ws": "^8.19.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^0.1.88"
   },
   "devDependencies": {
     "@grammyjs/types": "^3.23.0",
