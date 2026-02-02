@@ -4,6 +4,28 @@ set -e
 STATE_DIR="${OPENCLAW_STATE_DIR:-/data/openclaw}"
 SQLITE_LOCAL_DIR="/data/openclaw-local/sqlite"
 
+# --- Derive keys from MASTER_KEY via HKDF-SHA256 ---
+# One master secret derives: rclone crypt password, crypt salt, gateway auth token.
+# S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) are provider-issued and stay separate.
+if [ -n "$MASTER_KEY" ]; then
+  echo "Deriving keys from MASTER_KEY..."
+  derive_key() {
+    node -e "
+      const c = require('crypto');
+      const key = c.hkdfSync('sha256', process.argv[1], '', process.argv[2], 32);
+      process.stdout.write(Buffer.from(key).toString('base64'));
+    " "$MASTER_KEY" "$1"
+  }
+
+  # Derive and obscure rclone crypt passwords (rclone needs its own obscured format)
+  RCLONE_CRYPT_PASSWORD=$(rclone obscure "$(derive_key rclone-crypt-password)")
+  RCLONE_CRYPT_PASSWORD2=$(rclone obscure "$(derive_key rclone-crypt-salt)")
+  GATEWAY_AUTH_TOKEN=$(derive_key gateway-auth-token | tr -d '/+=' | head -c 32)
+
+  export RCLONE_CRYPT_PASSWORD RCLONE_CRYPT_PASSWORD2 GATEWAY_AUTH_TOKEN
+  echo "Keys derived (crypt password, crypt salt, gateway token)."
+fi
+
 # --- Encrypted S3 storage via rclone crypt + mount ---
 if [ -n "$S3_BUCKET" ]; then
   echo "S3 storage configured (bucket: $S3_BUCKET), setting up rclone..."
@@ -77,11 +99,12 @@ fi
 # Bootstrap minimal config if none exists
 CONFIG_FILE="$STATE_DIR/openclaw.json"
 if [ ! -f "$CONFIG_FILE" ]; then
-  BOOT_TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+  # Use derived gateway token if available, otherwise generate random
+  BOOT_TOKEN="${GATEWAY_AUTH_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
   cat > "$CONFIG_FILE" <<CONF
 {"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false},"agents":{"defaults":{"memorySearch":{"provider":"openai","model":"qwen/qwen3-embedding-8b","remote":{"baseUrl":"https://api.redpill.ai/v1"},"fallback":"none"}}}}
 CONF
-  echo "Created default config at $CONFIG_FILE (bootstrap token: $BOOT_TOKEN)"
+  echo "Created default config at $CONFIG_FILE (token: ${GATEWAY_AUTH_TOKEN:+derived}${GATEWAY_AUTH_TOKEN:-random})"
 fi
 
 # --- SQLite symlink helper ---
