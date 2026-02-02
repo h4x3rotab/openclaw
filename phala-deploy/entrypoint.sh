@@ -60,38 +60,61 @@ RCONF
   echo "Restoring SQLite files from S3..."
   rclone copy s3-crypt:sqlite/ "$SQLITE_LOCAL_DIR/" 2>/dev/null || true
 
-  # Mount encrypted S3 as state dir
+  # Try FUSE mount first; fall back to rclone sync if FUSE unavailable
   mkdir -p "$STATE_DIR"
-  rclone mount s3-crypt: "$STATE_DIR" \
-    --vfs-cache-mode writes \
-    --vfs-write-back 5s \
-    --dir-cache-time 30s \
-    --vfs-cache-max-size 500M \
-    --allow-other \
-    --daemon
+  S3_MODE=""
 
-  # Wait for mount
-  echo "Waiting for rclone mount..."
-  MOUNT_WAIT=0
-  while ! mountpoint -q "$STATE_DIR"; do
-    sleep 0.5
-    MOUNT_WAIT=$((MOUNT_WAIT + 1))
-    if [ $MOUNT_WAIT -ge 20 ]; then
-      echo "ERROR: rclone mount not ready after 10s, aborting."
-      exit 1
+  if [ -e /dev/fuse ]; then
+    echo "Attempting FUSE mount..."
+    # Run mount in foreground briefly to catch errors, then daemonize
+    rclone mount s3-crypt: "$STATE_DIR" \
+      --vfs-cache-mode writes \
+      --vfs-write-back 5s \
+      --dir-cache-time 30s \
+      --vfs-cache-max-size 500M \
+      --allow-other \
+      --daemon 2>&1 || true
+
+    # Wait for FUSE mount (up to 10s) — check for fuse.rclone specifically,
+    # not just mountpoint (Docker volume is already a mountpoint)
+    MOUNT_WAIT=0
+    while ! mount | grep -q "on $STATE_DIR type fuse.rclone"; do
+      sleep 0.5
+      MOUNT_WAIT=$((MOUNT_WAIT + 1))
+      if [ $MOUNT_WAIT -ge 20 ]; then
+        break
+      fi
+    done
+
+    if mount | grep -q "on $STATE_DIR type fuse.rclone"; then
+      S3_MODE="mount"
+      echo "rclone FUSE mount ready at $STATE_DIR"
+    else
+      echo "FUSE mount failed, falling back to sync mode."
     fi
-  done
-  echo "rclone mount ready at $STATE_DIR"
+  fi
 
-  # Start periodic SQLite backup to S3 (every 60s)
+  # Fallback: sync mode (pull from S3, periodic push back)
+  if [ -z "$S3_MODE" ]; then
+    S3_MODE="sync"
+    echo "Using rclone sync mode (no FUSE)."
+    rclone copy s3-crypt: "$STATE_DIR/" --exclude "sqlite/**" 2>&1 || true
+    echo "Initial sync from S3 complete."
+  fi
+
+  # Periodic background jobs
   (
     while true; do
       sleep 60
+      # Always backup SQLite to S3
       rclone copy "$SQLITE_LOCAL_DIR/" s3-crypt:sqlite/ 2>/dev/null || true
+      # In sync mode, also push state dir changes back to S3
+      if [ "$S3_MODE" = "sync" ]; then
+        rclone copy "$STATE_DIR/" s3-crypt: --exclude "sqlite/**" 2>/dev/null || true
+      fi
     done
   ) &
-  SQLITE_BACKUP_PID=$!
-  echo "SQLite backup loop started (PID $SQLITE_BACKUP_PID)"
+  echo "Background sync started (mode: $S3_MODE, PID $!)"
 else
   mkdir -p "$STATE_DIR"
 fi
