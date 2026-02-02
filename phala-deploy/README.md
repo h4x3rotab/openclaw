@@ -39,6 +39,7 @@ Edit `phala-deploy/secrets/r2.env`:
 
 ```env
 MASTER_KEY=<your-base64-master-key>
+REDPILL_API_KEY=<your-redpill-api-key>
 S3_BUCKET=<your-bucket-name>
 S3_ENDPOINT=<your-s3-endpoint-url>
 S3_PROVIDER=Cloudflare
@@ -46,6 +47,8 @@ S3_REGION=auto
 AWS_ACCESS_KEY_ID=<your-access-key>
 AWS_SECRET_ACCESS_KEY=<your-secret-key>
 ```
+
+Get a Redpill API key at [redpill.ai](https://redpill.ai). This gives access to GPU TEE models (DeepSeek, Qwen, Llama, etc.) with end-to-end encrypted inference.
 
 This file is gitignored. Never commit it.
 
