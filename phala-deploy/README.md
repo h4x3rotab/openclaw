@@ -1,18 +1,27 @@
 # Deploy OpenClaw on Phala Cloud
 
-Run an OpenClaw gateway inside a Phala Confidential VM (CVM) with encrypted S3-backed storage. The CVM is stateless — all state lives in S3, encrypted client-side, so you can destroy and recreate the VM without losing data.
+Run an OpenClaw gateway inside a Phala Confidential VM (CVM) with optional encrypted S3-backed storage.
+
+## Storage modes
+
+| Mode | State location | Persistence | Best for |
+|------|---------------|-------------|----------|
+| **S3 (recommended)** | Encrypted S3 bucket via rclone FUSE mount | Survives CVM destruction | Production |
+| **Local volume** | Docker volume inside the CVM | Lost if CVM is destroyed | Testing / development |
+
+S3 mode is enabled by setting `S3_BUCKET`. Without it, the CVM uses a local Docker volume.
 
 ## Prerequisites
 
 - A [Phala Cloud](https://cloud.phala.com) account
 - The [Phala CLI](https://docs.phala.network/cli) installed: `npm install -g phala`
-- An S3-compatible bucket (Cloudflare R2, AWS S3, MinIO, etc.)
 - Docker installed locally (for building the image)
 - An SSH key pair (for accessing the CVM)
+- (S3 mode) An S3-compatible bucket (Cloudflare R2, AWS S3, MinIO, etc.)
 
 ## Quick start
 
-### 1. Create an S3 bucket
+### 1. Create an S3 bucket (skip for local-only mode)
 
 **Cloudflare R2** (recommended for simplicity):
 
@@ -23,7 +32,7 @@ Run an OpenClaw gateway inside a Phala Confidential VM (CVM) with encrypted S3-b
 
 ### 2. Generate a master key
 
-The master key is the single secret that derives all encryption passwords and the gateway auth token. Keep it safe — if you lose it, your encrypted data is unrecoverable.
+The master key derives all encryption passwords and the gateway auth token. Keep it safe — if you lose it, your encrypted data is unrecoverable.
 
 ```sh
 head -c 32 /dev/urandom | base64
@@ -35,7 +44,7 @@ head -c 32 /dev/urandom | base64
 cp phala-deploy/secrets/.env.example phala-deploy/secrets/.env
 ```
 
-Edit `phala-deploy/secrets/.env`:
+**S3 mode** — edit `phala-deploy/secrets/.env`:
 
 ```env
 MASTER_KEY=<your-base64-master-key>
@@ -48,28 +57,20 @@ AWS_ACCESS_KEY_ID=<your-access-key>
 AWS_SECRET_ACCESS_KEY=<your-secret-key>
 ```
 
-Get a Redpill API key at [redpill.ai](https://redpill.ai). This gives access to GPU TEE models (DeepSeek, Qwen, Llama, etc.) with end-to-end encrypted inference.
-
-**Local-only mode (no S3):** If you don't need encrypted S3 storage, just omit the S3 variables. The CVM will use a local Docker volume for state instead. Only `MASTER_KEY` and `REDPILL_API_KEY` are required:
+**Local-only mode** — only two variables required:
 
 ```env
 MASTER_KEY=<your-base64-master-key>
 REDPILL_API_KEY=<your-redpill-api-key>
 ```
 
-Note: in local-only mode, state is lost if the CVM is destroyed. S3 mode is recommended for production.
+Get a Redpill API key at [redpill.ai](https://redpill.ai). This gives access to GPU TEE models (DeepSeek, Qwen, Llama, etc.) with end-to-end encrypted inference.
 
 This file is gitignored. Never commit it.
 
 ### 4. Docker image
 
-A pre-built image is available on Docker Hub:
-
-```
-h4x3rotab/openclaw-cvm@sha256:efc18f5d94620734c0441361e4faa50f412cbd5ebebdad05fde2be79539fd95b
-```
-
-The `docker-compose.yml` already pins this image by digest. No build step needed unless you want a custom image.
+A pre-built image is available on Docker Hub. The `docker-compose.yml` already pins the image by digest. No build step needed unless you want a custom image.
 
 To build your own:
 
@@ -87,13 +88,13 @@ cd phala-deploy
 phala deploy \
   -n my-openclaw \
   -c docker-compose.yml \
-  -e .env \
+  -e secrets/.env \
   -t tdx.medium \
   --dev-os \
   --wait
 ```
 
-The `-e .env` flag passes your secrets as encrypted environment variables. They are injected at runtime and never stored in plaintext.
+The `-e secrets/.env` flag passes your secrets as encrypted environment variables. They are injected at runtime and never stored in plaintext.
 
 The CLI will output your CVM ID and dashboard URL. Save these.
 
@@ -105,23 +106,77 @@ Check the CVM logs:
 phala cvms logs <your-cvm-uuid>
 ```
 
-You should see:
+**S3 mode** — you should see:
 
 ```
 Deriving keys from MASTER_KEY...
 Keys derived (crypt password, crypt salt, gateway token).
 S3 storage configured (bucket: ...), setting up rclone...
-rclone mount ready at /data/openclaw
-Created default config at /data/openclaw/openclaw.json (token: derived)
+Attempting FUSE mount...
+rclone FUSE mount ready at /data/openclaw
 SSH daemon started.
 Docker daemon ready.
 ```
+
+**Local-only mode** — you should see:
+
+```
+Deriving keys from MASTER_KEY...
+Keys derived (crypt password, crypt salt, gateway token).
+SSH daemon started.
+Docker daemon ready.
+```
+
+## How S3 storage works
+
+The entrypoint tries two S3 sync strategies in order:
+
+### FUSE mount (preferred)
+
+If `/dev/fuse` is available, rclone mounts the encrypted S3 bucket directly at `/data/openclaw` as a FUSE filesystem. The VFS cache layer handles syncing automatically:
+
+- Writes are cached locally and flushed to S3 after 5 seconds idle
+- Reads go through the local cache
+- No background sync jobs needed — rclone handles everything
+- SQLite (memory.db) works directly on the mount via the VFS write cache
+
+```
+/data/openclaw  (FUSE mount)
+  └── rclone crypt (NaCl SecretBox)
+       └── S3 bucket (encrypted blobs + encrypted filenames)
+```
+
+### Sync fallback
+
+If FUSE is unavailable, the entrypoint falls back to periodic `rclone copy`:
+
+- On boot: pulls all state from S3 to the local Docker volume
+- Every 60 seconds: pushes changes back to S3
+- SQLite files are kept in a separate local directory and synced independently
+- Symlinks redirect `memory.db` from the state dir to local storage
+
+Maximum data loss in sync mode: 60 seconds of writes.
+
+## How encryption works
+
+```
+MASTER_KEY (one secret)
+  ├── HKDF("rclone-crypt-password")  → file encryption key
+  ├── HKDF("rclone-crypt-salt")      → encryption salt
+  └── HKDF("gateway-auth-token")     → gateway auth
+```
+
+- All files are encrypted client-side before upload (NaCl SecretBox)
+- Filenames are encrypted (S3 bucket contents are unreadable)
+- S3 provider never sees plaintext
+
+For full details, see [S3_STORAGE.md](S3_STORAGE.md).
 
 ## Connecting to your gateway
 
 The gateway listens on port 18789. Your CVM exposes this via the Phala network. Find the public URL in the Phala dashboard under your CVM's port mappings.
 
-The gateway auth token is derived from your master key, so it is stable across restarts. You can find it in the boot logs or derive it yourself:
+The gateway auth token is derived from your master key, so it is stable across restarts. You can derive it yourself:
 
 ```sh
 node -e "
@@ -166,36 +221,14 @@ phala deploy --cvm-id <your-cvm-uuid> -c docker-compose.yml
 
 The new image pulls in the background. The old container keeps running until the new one is ready.
 
-## How encryption works
-
-```
-MASTER_KEY (one secret)
-  ├── HKDF("rclone-crypt-password")  → file encryption key
-  ├── HKDF("rclone-crypt-salt")      → encryption salt
-  └── HKDF("gateway-auth-token")     → gateway auth
-
-/data/openclaw (FUSE mount)
-  └── rclone crypt (NaCl SecretBox)
-       └── S3 bucket (encrypted blobs + encrypted filenames)
-```
-
-- All files are encrypted client-side before upload
-- Filenames are encrypted (S3 bucket contents are unreadable gibberish)
-- S3 provider never sees plaintext
-- SQLite databases are kept locally and backed up to S3 every 60 seconds
-
-For full details, see [S3_STORAGE.md](S3_STORAGE.md).
-
 ## Disaster recovery
 
-If your CVM is destroyed:
+If your CVM is destroyed (S3 mode only):
 
 1. Create a new CVM with the same `MASTER_KEY` and S3 credentials
-2. The entrypoint derives the same keys, restores data from S3, and mounts
-3. Everything is restored automatically (config, agents, memory)
+2. The entrypoint derives the same keys, mounts S3, and everything is restored
+3. Config, agents, and memory are all recovered automatically
 4. The gateway auth token is the same — existing clients reconnect without changes
-
-Maximum data loss: 60 seconds of SQLite writes (the backup interval).
 
 ## File reference
 
@@ -212,19 +245,15 @@ Maximum data loss: 60 seconds of SQLite writes (the backup interval).
 
 ## Troubleshooting
 
-**Mount fails ("ERROR: rclone mount not ready after 10s")**
-- Check S3 credentials are correct
-- Check the bucket exists
-- Check `S3_PROVIDER` matches your provider (e.g. `Cloudflare` for R2)
+**FUSE mount falls back to sync mode**
+- This is expected if `/dev/fuse` is not available. Sync mode works but has up to 60s data loss on destruction.
+- Check logs for "FUSE mount failed, falling back to sync mode."
 
 **Gateway says "Missing config"**
-- The S3 mount may not be ready. Check `mountpoint /data/openclaw` via SSH.
+- The S3 mount may not be ready. Check `mount | grep fuse.rclone` via SSH.
 
 **"container name already in use" on redeploy**
 - The old container auto-restarts before compose runs. Wait a moment and retry, or check `journalctl -u app-compose` on the VM host.
-
-**SQLite errors**
-- Memory databases are symlinked to local storage. Check `/data/openclaw-local/sqlite/` via SSH.
 
 **Docker daemon fails inside CVM**
 - This is non-critical (gateway works without it). The CVM kernel may not support all iptables modules. Check logs for details.
