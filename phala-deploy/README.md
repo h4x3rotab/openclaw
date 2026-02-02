@@ -78,30 +78,17 @@ cd phala-deploy
 phala deploy \
   -n my-openclaw \
   -c docker-compose.yml \
+  -e .env \
   -t tdx.medium \
   --dev-os \
   --wait
 ```
 
+The `-e .env` flag passes your secrets as encrypted environment variables. They are injected at runtime and never stored in plaintext.
+
 The CLI will output your CVM ID and dashboard URL. Save these.
 
-### 6. Set environment variables
-
-Go to the [Phala Cloud dashboard](https://cloud.phala.com), open your CVM, and add the env vars from your `.env` file to the **encrypted environment** configuration. These are injected at runtime and never stored in plaintext.
-
-Alternatively, pass them via the CLI:
-
-```sh
-phala deploy --cvm-id <your-cvm-uuid> \
-  -e MASTER_KEY=<...> \
-  -e S3_BUCKET=<...> \
-  -e S3_ENDPOINT=<...> \
-  -e S3_PROVIDER=Cloudflare \
-  -e AWS_ACCESS_KEY_ID=<...> \
-  -e AWS_SECRET_ACCESS_KEY=<...>
-```
-
-### 7. Verify
+### 6. Verify
 
 Check the CVM logs:
 
