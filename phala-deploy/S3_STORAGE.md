@@ -76,7 +76,7 @@ Save this value securely. If you lose it, the encrypted data on S3 is unrecovera
 
 ### 3. Create a secrets file
 
-Save credentials to `phala-deploy/secrets/r2.env` (gitignored):
+Save credentials to `phala-deploy/secrets/.env` (gitignored):
 
 ```env
 MASTER_KEY=your-base64-master-key
@@ -95,7 +95,7 @@ For local testing:
 ```sh
 docker build -f phala-deploy/Dockerfile -t openclaw-cvm:test .
 docker run -d --name openclaw --privileged \
-  --env-file phala-deploy/secrets/r2.env \
+  --env-file phala-deploy/secrets/.env \
   -e OPENCLAW_STATE_DIR=/data/openclaw \
   -e NODE_ENV=production \
   -p 18789:18789 \
