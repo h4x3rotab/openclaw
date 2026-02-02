@@ -32,10 +32,10 @@ head -c 32 /dev/urandom | base64
 ### 3. Create your secrets file
 
 ```sh
-cp phala-deploy/secrets/r2.env.example phala-deploy/secrets/r2.env
+cp phala-deploy/secrets/.env.example phala-deploy/secrets/.env
 ```
 
-Edit `phala-deploy/secrets/r2.env`:
+Edit `phala-deploy/secrets/.env`:
 
 ```env
 MASTER_KEY=<your-base64-master-key>
@@ -87,7 +87,7 @@ The CLI will output your CVM ID and dashboard URL. Save these.
 
 ### 7. Set environment variables
 
-Go to the [Phala Cloud dashboard](https://cloud.phala.com), open your CVM, and add the env vars from your `r2.env` file to the **encrypted environment** configuration. These are injected at runtime and never stored in plaintext.
+Go to the [Phala Cloud dashboard](https://cloud.phala.com), open your CVM, and add the env vars from your `.env` file to the **encrypted environment** configuration. These are injected at runtime and never stored in plaintext.
 
 Alternatively, pass them via the CLI:
 
@@ -208,7 +208,7 @@ Maximum data loss: 60 seconds of SQLite writes (the backup interval).
 | `Dockerfile` | CVM image (Ubuntu 24.04 + Node 22 + rclone + Docker-in-Docker) |
 | `entrypoint.sh` | Boot sequence: key derivation, S3 mount, SSH, Docker, gateway |
 | `docker-compose.yml` | Compose file for `phala deploy` |
-| `secrets/r2.env` | Your credentials (gitignored) |
+| `secrets/.env` | Your credentials (gitignored) |
 | `cvm-ssh` | Interactive SSH into the container |
 | `cvm-exec` | Run a command in the container |
 | `cvm-scp` | Copy files to/from the container |
