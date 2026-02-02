@@ -50,6 +50,15 @@ AWS_SECRET_ACCESS_KEY=<your-secret-key>
 
 Get a Redpill API key at [redpill.ai](https://redpill.ai). This gives access to GPU TEE models (DeepSeek, Qwen, Llama, etc.) with end-to-end encrypted inference.
 
+**Local-only mode (no S3):** If you don't need encrypted S3 storage, just omit the S3 variables. The CVM will use a local Docker volume for state instead. Only `MASTER_KEY` and `REDPILL_API_KEY` are required:
+
+```env
+MASTER_KEY=<your-base64-master-key>
+REDPILL_API_KEY=<your-redpill-api-key>
+```
+
+Note: in local-only mode, state is lost if the CVM is destroyed. S3 mode is recommended for production.
+
 This file is gitignored. Never commit it.
 
 ### 4. Docker image
