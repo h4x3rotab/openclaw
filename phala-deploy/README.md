@@ -52,25 +52,25 @@ Get a Redpill API key at [redpill.ai](https://redpill.ai). This gives access to 
 
 This file is gitignored. Never commit it.
 
-### 4. Build and push the Docker image
+### 4. Docker image
+
+A pre-built image is available on Docker Hub:
+
+```
+h4x3rotab/openclaw-cvm@sha256:efc18f5d94620734c0441361e4faa50f412cbd5ebebdad05fde2be79539fd95b
+```
+
+The `docker-compose.yml` already pins this image by digest. No build step needed unless you want a custom image.
+
+To build your own:
 
 ```sh
-# Build from repo root
 docker build -f phala-deploy/Dockerfile -t your-dockerhub-user/openclaw-cvm:latest .
-
-# Push to Docker Hub (Phala needs a registry-hosted image)
 docker push your-dockerhub-user/openclaw-cvm:latest
+# Then update the image: line in docker-compose.yml
 ```
 
-### 5. Update docker-compose.yml
-
-Edit `phala-deploy/docker-compose.yml` and set the `image:` to your pushed image:
-
-```yaml
-image: your-dockerhub-user/openclaw-cvm:latest
-```
-
-### 6. Deploy to Phala Cloud
+### 5. Deploy to Phala Cloud
 
 ```sh
 cd phala-deploy
@@ -85,7 +85,7 @@ phala deploy \
 
 The CLI will output your CVM ID and dashboard URL. Save these.
 
-### 7. Set environment variables
+### 6. Set environment variables
 
 Go to the [Phala Cloud dashboard](https://cloud.phala.com), open your CVM, and add the env vars from your `.env` file to the **encrypted environment** configuration. These are injected at runtime and never stored in plaintext.
 
@@ -101,7 +101,7 @@ phala deploy --cvm-id <your-cvm-uuid> \
   -e AWS_SECRET_ACCESS_KEY=<...>
 ```
 
-### 8. Verify
+### 7. Verify
 
 Check the CVM logs:
 
