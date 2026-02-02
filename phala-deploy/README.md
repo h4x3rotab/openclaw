@@ -100,10 +100,10 @@ The CLI will output your CVM ID and dashboard URL. Save these.
 
 ### 6. Verify
 
-Check the CVM logs:
+Check the container logs:
 
 ```sh
-phala cvms logs <your-cvm-uuid>
+phala logs openclaw --cvm-id <your-cvm-name-or-uuid>
 ```
 
 **S3 mode** — you should see:
