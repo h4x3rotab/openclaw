@@ -20,6 +20,7 @@ provider = ${S3_PROVIDER:-Other}
 env_auth = true
 endpoint = ${S3_ENDPOINT}
 region = ${S3_REGION}
+no_check_bucket = true
 
 [s3-crypt]
 type = crypt
