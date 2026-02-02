@@ -56,7 +56,9 @@ RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bash
     echo 'export PATH="/root/.bun/bin:$PATH"' >> /root/.bashrc
 
 # rclone for encrypted S3 mount (single static binary, ~50MB)
-RUN curl -fsSL https://downloads.rclone.org/current/rclone-current-linux-amd64.zip -o /tmp/rclone.zip && \
+ARG RCLONE_VERSION=1.73.0
+RUN curl -fsSL "https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip" \
+      -o /tmp/rclone.zip && \
     unzip -j /tmp/rclone.zip '*/rclone' -d /usr/local/bin && \
     chmod +x /usr/local/bin/rclone && \
     rm /tmp/rclone.zip
