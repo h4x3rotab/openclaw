@@ -127,6 +127,16 @@ SSH daemon started.
 Docker daemon ready.
 ```
 
+### 7. What's next
+
+1. **Open the dashboard** — go to `https://<app_id>-18789.<gateway>.phala.network?token=<your-gateway-token>` (see [Connecting to your gateway](#connecting-to-your-gateway) for how to construct this URL)
+
+2. **Create your agent** — send `wake up` in the dashboard chat. The agent will walk you through creating a persona (name, personality, instructions).
+
+3. **Connect Telegram** — once your agent is set up, send a message in the dashboard chat asking it to connect to your Telegram bot. Provide your Telegram bot token (from [@BotFather](https://t.me/BotFather)) and the agent will set up the connection and pair itself with the bot.
+
+After that, your agent is live on Telegram and you can chat with it there.
+
 ## How S3 storage works
 
 The entrypoint tries two S3 sync strategies in order:
