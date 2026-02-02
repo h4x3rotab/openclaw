@@ -128,6 +128,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
     // Apply full Redpill provider config (model catalog + default model)
     let cfg = applyRedpillConfig(base);
 
+    // Override default model to Kimi K2.5
+    cfg.agents.defaults.model.primary = 'redpill/moonshotai/kimi-k2.5';
+
     // Inject Redpill API key if provided
     if (process.env.REDPILL_API_KEY) {
       cfg.models.providers.redpill.apiKey = process.env.REDPILL_API_KEY;
