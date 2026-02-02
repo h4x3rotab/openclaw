@@ -66,7 +66,11 @@ RCONF
 
   if [ -e /dev/fuse ]; then
     echo "Attempting FUSE mount..."
-    # Run mount in foreground briefly to catch errors, then daemonize
+    # Unmount Docker volume if present (FUSE can't overlay on existing mounts)
+    if mountpoint -q "$STATE_DIR" 2>/dev/null; then
+      echo "Unmounting existing volume at $STATE_DIR..."
+      umount "$STATE_DIR" 2>/dev/null || true
+    fi
     rclone mount s3-crypt: "$STATE_DIR" \
       --vfs-cache-mode writes \
       --vfs-write-back 5s \
@@ -226,9 +230,10 @@ if docker info >/dev/null 2>&1; then
   echo "Docker daemon ready."
 fi
 
-# Set up SQLite symlinks (run once now, then periodically for new agents)
-setup_sqlite_symlinks
-if [ -n "$S3_BUCKET" ]; then
+# Set up SQLite symlinks — only needed in sync mode (no VFS cache).
+# In FUSE mount mode, --vfs-cache-mode writes handles SQLite locally.
+if [ "$S3_MODE" = "sync" ]; then
+  setup_sqlite_symlinks
   (
     while true; do
       sleep 30
