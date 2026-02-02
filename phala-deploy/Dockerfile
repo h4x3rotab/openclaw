@@ -55,6 +55,17 @@ RUN apt-get update && \
 RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc && \
     echo 'export PATH="/root/.bun/bin:$PATH"' >> /root/.bashrc
 
+# rclone for encrypted S3 mount (single static binary, ~50MB)
+RUN curl -fsSL https://downloads.rclone.org/current/rclone-current-linux-amd64.zip -o /tmp/rclone.zip && \
+    unzip -j /tmp/rclone.zip '*/rclone' -d /usr/local/bin && \
+    chmod +x /usr/local/bin/rclone && \
+    rm /tmp/rclone.zip
+
+# Install fuse3 for rclone mount
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends fuse3 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 COPY phala-deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
