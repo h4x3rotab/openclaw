@@ -19,6 +19,8 @@ services:
       NODE_ENV: production
       # Master key — derives rclone crypt passwords + gateway auth token via HKDF
       MASTER_KEY: ${MASTER_KEY:-}
+      # Redpill AI provider
+      REDPILL_API_KEY: ${REDPILL_API_KEY:-}
       # Encrypted S3 storage (optional — omit S3_BUCKET to use local volume)
       S3_BUCKET: ${S3_BUCKET:-}
       S3_PREFIX: ${S3_PREFIX:-openclaw-state}

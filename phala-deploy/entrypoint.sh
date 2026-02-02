@@ -96,15 +96,52 @@ else
   mkdir -p "$STATE_DIR"
 fi
 
-# Bootstrap minimal config if none exists
+# Bootstrap config if none exists — generates full Redpill provider + model catalog
 CONFIG_FILE="$STATE_DIR/openclaw.json"
 if [ ! -f "$CONFIG_FILE" ]; then
-  # Use derived gateway token if available, otherwise generate random
   BOOT_TOKEN="${GATEWAY_AUTH_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
-  cat > "$CONFIG_FILE" <<CONF
+  node -e "
+    // Import Redpill config functions from installed openclaw package
+    const PKG = '/usr/lib/node_modules/@h4x3rotab/openclaw/dist';
+    const { applyRedpillConfig } = require(PKG + '/commands/onboard-auth.config-core.js');
+
+    const base = {
+      gateway: {
+        mode: 'local',
+        bind: 'lan',
+        auth: { token: process.env.BOOT_TOKEN },
+        controlUi: { dangerouslyDisableDeviceAuth: true },
+      },
+      update: { checkOnStart: false },
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: 'openai',
+            model: 'qwen/qwen3-embedding-8b',
+            remote: { baseUrl: 'https://api.redpill.ai/v1', apiKey: process.env.REDPILL_API_KEY || undefined },
+            fallback: 'none',
+          },
+        },
+      },
+    };
+
+    // Apply full Redpill provider config (model catalog + default model)
+    let cfg = applyRedpillConfig(base);
+
+    // Inject Redpill API key if provided
+    if (process.env.REDPILL_API_KEY) {
+      cfg.models.providers.redpill.apiKey = process.env.REDPILL_API_KEY;
+    }
+
+    require('fs').writeFileSync(process.env.CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  " 2>&1 || {
+    # Fallback: write minimal config if node import fails (e.g. package structure changed)
+    echo "Warning: full config generation failed, writing minimal config."
+    cat > "$CONFIG_FILE" <<CONF
 {"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false},"agents":{"defaults":{"memorySearch":{"provider":"openai","model":"qwen/qwen3-embedding-8b","remote":{"baseUrl":"https://api.redpill.ai/v1"},"fallback":"none"}}}}
 CONF
-  echo "Created default config at $CONFIG_FILE (token: ${GATEWAY_AUTH_TOKEN:+derived}${GATEWAY_AUTH_TOKEN:-random})"
+  }
+  echo "Created config at $CONFIG_FILE (token: ${GATEWAY_AUTH_TOKEN:+derived}${GATEWAY_AUTH_TOKEN:-random})"
 fi
 
 # --- SQLite symlink helper ---
