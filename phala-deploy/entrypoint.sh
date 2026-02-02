@@ -124,6 +124,7 @@ fi
 CONFIG_FILE="$STATE_DIR/openclaw.json"
 if [ ! -f "$CONFIG_FILE" ]; then
   BOOT_TOKEN="${GATEWAY_AUTH_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
+  export CONFIG_FILE BOOT_TOKEN
   node -e "
     // Import Redpill config functions from installed openclaw package
     const PKG = '/usr/lib/node_modules/@h4x3rotab/openclaw/dist';

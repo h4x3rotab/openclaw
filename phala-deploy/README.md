@@ -174,9 +174,21 @@ For full details, see [S3_STORAGE.md](S3_STORAGE.md).
 
 ## Connecting to your gateway
 
-The gateway listens on port 18789. Your CVM exposes this via the Phala network. Find the public URL in the Phala dashboard under your CVM's port mappings.
+The gateway listens on port 18789. The CVM exposes it via the Phala network at:
 
-The gateway auth token is derived from your master key, so it is stable across restarts. You can derive it yourself:
+```
+https://<app_id>-18789.<gateway>.phala.network
+```
+
+Find your `app_id` and `gateway` in the Phala dashboard under your CVM's details, or from the deploy output.
+
+To open the dashboard with authentication, append your gateway token to the URL:
+
+```
+https://<app_id>-18789.<gateway>.phala.network?token=<your-gateway-token>
+```
+
+The gateway auth token is derived from your master key, so it is stable across restarts. You can derive it locally:
 
 ```sh
 node -e "
@@ -188,24 +200,33 @@ node -e "
 
 ## SSH access
 
-SSH into the container for debugging:
+The container runs an SSH daemon on port 1022. The CVM exposes it via the Phala network.
+
+### Setup
+
+Set the SSH host (find `app_id` and `gateway` from the Phala dashboard):
 
 ```sh
-# Set the SSH host (find app_id and gateway in the Phala dashboard)
 export CVM_SSH_HOST=<app_id>-1022.<gateway>.phala.network
+```
 
+Your SSH public key is automatically injected into the container from the CVM host.
+
+### Usage
+
+```sh
 # Interactive shell
 ./phala-deploy/cvm-ssh
 
 # Run a command
 ./phala-deploy/cvm-exec 'OPENCLAW_STATE_DIR=/data/openclaw openclaw channels status --probe'
 
-# Copy files
+# Copy files to/from the container
 ./phala-deploy/cvm-scp pull /data/openclaw/.openclaw ./backup
 ./phala-deploy/cvm-scp push ./backup/.openclaw /data/openclaw
 ```
 
-Note: SSH sessions don't have `OPENCLAW_STATE_DIR` set. Always prefix commands with `OPENCLAW_STATE_DIR=/data/openclaw`.
+**Note:** SSH sessions don't have `OPENCLAW_STATE_DIR` set. Always prefix commands with `OPENCLAW_STATE_DIR=/data/openclaw`.
 
 ## Updating
 
