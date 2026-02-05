@@ -113,7 +113,8 @@ Deriving keys from MASTER_KEY...
 Keys derived (crypt password, crypt salt, gateway token).
 S3 storage configured (bucket: ...), setting up rclone...
 Attempting FUSE mount...
-rclone FUSE mount ready at /data/openclaw
+rclone FUSE mount ready at /data
+Home symlinks created (~/.openclaw, ~/.config → /data)
 SSH daemon started.
 Docker daemon ready.
 ```
@@ -123,6 +124,7 @@ Docker daemon ready.
 ```
 Deriving keys from MASTER_KEY...
 Keys derived (crypt password, crypt salt, gateway token).
+Home symlinks created (~/.openclaw, ~/.config → /data)
 SSH daemon started.
 Docker daemon ready.
 ```
@@ -229,14 +231,14 @@ Your SSH public key is automatically injected into the container from the CVM ho
 ./phala-deploy/cvm-ssh
 
 # Run a command
-./phala-deploy/cvm-exec 'OPENCLAW_STATE_DIR=/data/openclaw openclaw channels status --probe'
+./phala-deploy/cvm-exec 'openclaw channels status --probe'
 
 # Copy files to/from the container
-./phala-deploy/cvm-scp pull /data/openclaw/.openclaw ./backup
-./phala-deploy/cvm-scp push ./backup/.openclaw /data/openclaw
+./phala-deploy/cvm-scp pull /root/.openclaw ./backup
+./phala-deploy/cvm-scp push ./backup /root/.openclaw
 ```
 
-**Note:** SSH sessions don't have `OPENCLAW_STATE_DIR` set. Always prefix commands with `OPENCLAW_STATE_DIR=/data/openclaw`.
+**Note:** The entrypoint creates symlinks `~/.openclaw → /data/openclaw` and `~/.config → /data/.config`, so `openclaw` commands work without any env var prefixes.
 
 ## Updating
 
