@@ -42,4 +42,11 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
+  {
+    entry: "src/commands/onboard-auth.config-core.ts",
+    env,
+    fixedExtension: false,
+    outDir: "dist/commands",
+    platform: "node",
+  },
 ]);

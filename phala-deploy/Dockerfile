@@ -43,10 +43,12 @@ RUN NONINTERACTIVE=1 su - linuxbrew -c \
 ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
 ENV PATH="${HOMEBREW_PREFIX}/bin:${HOMEBREW_PREFIX}/sbin:${PATH}"
 
-# Layer 5: Install build-essential, npm install openclaw, then purge build tools + cache
+# Layer 5: Install build-essential, install OpenClaw from tarball, then purge build tools + cache
+COPY phala-deploy/openclaw.tgz /tmp/openclaw.tgz
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential && \
-    npm install -g @h4x3rotab/openclaw@latest && \
+    npm install -g /tmp/openclaw.tgz && \
+    rm -f /tmp/openclaw.tgz && \
     apt-get purge -y --auto-remove build-essential && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /root/.npm /tmp/* /usr/include

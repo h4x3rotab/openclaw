@@ -4,10 +4,10 @@ Run an OpenClaw gateway inside a Phala Confidential VM (CVM) with optional encry
 
 ## Storage modes
 
-| Mode | State location | Persistence | Best for |
-|------|---------------|-------------|----------|
-| **S3 (recommended)** | Encrypted S3 bucket via rclone FUSE mount | Survives CVM destruction | Production |
-| **Local volume** | Docker volume inside the CVM | Lost if CVM is destroyed | Testing / development |
+| Mode                 | State location                            | Persistence              | Best for              |
+| -------------------- | ----------------------------------------- | ------------------------ | --------------------- |
+| **S3 (recommended)** | Encrypted S3 bucket via rclone FUSE mount | Survives CVM destruction | Production            |
+| **Local volume**     | Docker volume inside the CVM              | Lost if CVM is destroyed | Testing / development |
 
 S3 mode is enabled by setting `S3_BUCKET`. Without it, the CVM uses a local Docker volume.
 
@@ -75,6 +75,11 @@ A pre-built image is available on Docker Hub. The `docker-compose.yml` already p
 To build your own:
 
 ```sh
+pnpm build
+pnpm ui:install
+pnpm ui:build
+npm pack
+mv openclaw-<version>.tgz phala-deploy/openclaw.tgz
 docker build -f phala-deploy/Dockerfile -t your-dockerhub-user/openclaw-cvm:latest .
 docker push your-dockerhub-user/openclaw-cvm:latest
 # Then update the image: line in docker-compose.yml
@@ -244,9 +249,19 @@ Your SSH public key is automatically injected into the container from the CVM ho
 
 To update the OpenClaw version:
 
-1. Rebuild the Docker image (picks up latest `@h4x3rotab/openclaw` from npm)
-2. Push to your registry
-3. Redeploy:
+1. Build a tarball and place it at `phala-deploy/openclaw.tgz`:
+
+```sh
+pnpm build
+pnpm ui:install
+pnpm ui:build
+npm pack
+mv openclaw-<version>.tgz phala-deploy/openclaw.tgz
+```
+
+2. Rebuild the Docker image
+3. Push to your registry
+4. Redeploy:
 
 ```sh
 phala deploy --cvm-id <your-cvm-uuid> -c docker-compose.yml
@@ -265,28 +280,32 @@ If your CVM is destroyed (S3 mode only):
 
 ## File reference
 
-| File | Purpose |
-|------|---------|
-| `Dockerfile` | CVM image (Ubuntu 24.04 + Node 22 + rclone + Docker-in-Docker) |
-| `entrypoint.sh` | Boot sequence: key derivation, S3 mount, SSH, Docker, gateway |
-| `docker-compose.yml` | Compose file for `phala deploy` |
-| `secrets/.env` | Your credentials (gitignored) |
-| `cvm-ssh` | Interactive SSH into the container |
-| `cvm-exec` | Run a command in the container |
-| `cvm-scp` | Copy files to/from the container |
-| `S3_STORAGE.md` | Detailed S3 encryption documentation |
+| File                 | Purpose                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `Dockerfile`         | CVM image (Ubuntu 24.04 + Node 22 + rclone + Docker-in-Docker) |
+| `entrypoint.sh`      | Boot sequence: key derivation, S3 mount, SSH, Docker, gateway  |
+| `docker-compose.yml` | Compose file for `phala deploy`                                |
+| `secrets/.env`       | Your credentials (gitignored)                                  |
+| `cvm-ssh`            | Interactive SSH into the container                             |
+| `cvm-exec`           | Run a command in the container                                 |
+| `cvm-scp`            | Copy files to/from the container                               |
+| `S3_STORAGE.md`      | Detailed S3 encryption documentation                           |
 
 ## Troubleshooting
 
 **FUSE mount falls back to sync mode**
+
 - This is expected if `/dev/fuse` is not available. Sync mode works but has up to 60s data loss on destruction.
 - Check logs for "FUSE mount failed, falling back to sync mode."
 
 **Gateway says "Missing config"**
+
 - The S3 mount may not be ready. Check `mount | grep fuse.rclone` via SSH.
 
 **"container name already in use" on redeploy**
+
 - The old container auto-restarts before compose runs. Wait a moment and retry, or check `journalctl -u app-compose` on the VM host.
 
 **Docker daemon fails inside CVM**
+
 - This is non-critical (gateway works without it). The CVM kernel may not support all iptables modules. Check logs for details.

@@ -138,41 +138,48 @@ if [ ! -f "$CONFIG_FILE" ]; then
   export CONFIG_FILE BOOT_TOKEN
   node -e "
     // Import Redpill config functions from installed openclaw package
-    const PKG = '/usr/lib/node_modules/@h4x3rotab/openclaw/dist';
-    const { applyRedpillConfig } = require(PKG + '/commands/onboard-auth.config-core.js');
+    const { writeFileSync } = require('fs');
+    const PKG = 'file:///usr/lib/node_modules/openclaw/dist/commands/onboard-auth.config-core.js';
 
-    const base = {
-      gateway: {
-        mode: 'local',
-        bind: 'lan',
-        auth: { token: process.env.BOOT_TOKEN },
-        controlUi: { dangerouslyDisableDeviceAuth: true },
-      },
-      update: { checkOnStart: false },
-      agents: {
-        defaults: {
-          memorySearch: {
-            provider: 'openai',
-            model: 'qwen/qwen3-embedding-8b',
-            remote: { baseUrl: 'https://api.redpill.ai/v1', apiKey: process.env.REDPILL_API_KEY || undefined },
-            fallback: 'none',
+    (async () => {
+      const { applyRedpillConfig } = await import(PKG);
+
+      const base = {
+        gateway: {
+          mode: 'local',
+          bind: 'lan',
+          auth: { token: process.env.BOOT_TOKEN },
+          controlUi: { dangerouslyDisableDeviceAuth: true },
+        },
+        update: { checkOnStart: false },
+        agents: {
+          defaults: {
+            memorySearch: {
+              provider: 'openai',
+              model: 'qwen/qwen3-embedding-8b',
+              remote: { baseUrl: 'https://api.redpill.ai/v1', apiKey: process.env.REDPILL_API_KEY || undefined },
+              fallback: 'none',
+            },
           },
         },
-      },
-    };
+      };
 
-    // Apply full Redpill provider config (model catalog + default model)
-    let cfg = applyRedpillConfig(base);
+      // Apply full Redpill provider config (model catalog + default model)
+      let cfg = applyRedpillConfig(base);
 
-    // Override default model to GLM 4.7
-    cfg.agents.defaults.model.primary = 'redpill/z-ai/glm-4.7';
+      // Override default model to GLM 4.7
+      cfg.agents.defaults.model.primary = 'redpill/z-ai/glm-4.7';
 
-    // Inject Redpill API key if provided
-    if (process.env.REDPILL_API_KEY) {
-      cfg.models.providers.redpill.apiKey = process.env.REDPILL_API_KEY;
-    }
+      // Inject Redpill API key if provided
+      if (process.env.REDPILL_API_KEY) {
+        cfg.models.providers.redpill.apiKey = process.env.REDPILL_API_KEY;
+      }
 
-    require('fs').writeFileSync(process.env.CONFIG_FILE, JSON.stringify(cfg, null, 2));
+      writeFileSync(process.env.CONFIG_FILE, JSON.stringify(cfg, null, 2));
+    })().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
   " 2>&1 || {
     # Fallback: write minimal config if node import fails (e.g. package structure changed)
     echo "Warning: full config generation failed, writing minimal config."
