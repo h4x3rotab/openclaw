@@ -131,7 +131,13 @@ ln -sfn "$DATA_DIR/openclaw" /root/.openclaw
 ln -sfn "$DATA_DIR/.config" /root/.config
 echo "Home symlinks created (~/.openclaw, ~/.config → $DATA_DIR)"
 
-# Bootstrap config if none exists — generates full Redpill provider + model catalog
+# Symlink Codex auth directory for OAuth token persistence
+mkdir -p "$DATA_DIR/codex-auth"
+rm -rf /root/.codex
+ln -s "$DATA_DIR/codex-auth" /root/.codex
+echo "Symlinked /root/.codex -> $DATA_DIR/codex-auth"
+
+# Bootstrap config if none exists — generates full Redpill provider + model catalog + Codex
 CONFIG_FILE="/root/.openclaw/openclaw.json"
 if [ ! -f "$CONFIG_FILE" ]; then
   BOOT_TOKEN="${GATEWAY_AUTH_TOKEN:-$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
@@ -167,8 +173,39 @@ if [ ! -f "$CONFIG_FILE" ]; then
       // Apply full Redpill provider config (model catalog + default model)
       let cfg = applyRedpillConfig(base);
 
-      // Override default model to GLM 4.7
-      cfg.agents.defaults.model.primary = 'redpill/z-ai/glm-4.7';
+      // --- OPENAI CODEX PROVIDER (OAuth — uses ChatGPT subscription, no API key) ---
+      // Uses chatgpt.com/backend-api with openai-codex-responses API type
+      // This works with ChatGPT OAuth tokens (no api.responses.write scope needed)
+      cfg.models.providers['openai-codex'] = {
+        baseUrl: 'https://chatgpt.com/backend-api',
+        api: 'openai-codex-responses',
+        models: [
+          { id: 'gpt-5.2', name: 'GPT-5.2 (Codex)', reasoning: false, input: ['text', 'image'], contextWindow: 200000, maxTokens: 32768 },
+          { id: 'gpt-5', name: 'GPT-5 (Codex)', reasoning: false, input: ['text', 'image'], contextWindow: 200000, maxTokens: 32768 },
+        ]
+      };
+
+      // Add model aliases for Codex
+      cfg.agents.defaults.models = cfg.agents.defaults.models || {};
+      cfg.agents.defaults.models['openai-codex/gpt-5.2'] = { alias: 'codex' };
+      cfg.agents.defaults.models['openai-codex/gpt-5'] = { alias: 'codex5' };
+
+      // --- ANTHROPIC PROVIDER (fallback) ---
+      if (process.env.ANTHROPIC_API_KEY) {
+        cfg.models.providers['anthropic'] = {
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: process.env.ANTHROPIC_API_KEY,
+          models: [
+            { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', reasoning: false, input: ['text', 'image'], contextWindow: 200000, maxTokens: 32000 },
+            { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', reasoning: false, input: ['text', 'image'], contextWindow: 200000, maxTokens: 64000 },
+          ]
+        };
+        cfg.agents.defaults.models['anthropic/claude-opus-4-5-20251101'] = { alias: 'opus' };
+        cfg.agents.defaults.models['anthropic/claude-sonnet-4-20250514'] = { alias: 'sonnet' };
+      }
+
+      // Override default model to Codex GPT-5.2
+      cfg.agents.defaults.model.primary = 'openai-codex/gpt-5.2';
 
       // Inject Redpill API key if provided
       if (process.env.REDPILL_API_KEY) {
@@ -184,7 +221,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     # Fallback: write minimal config if node import fails (e.g. package structure changed)
     echo "Warning: full config generation failed, writing minimal config."
     cat > "$CONFIG_FILE" <<CONF
-{"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false},"agents":{"defaults":{"memorySearch":{"provider":"openai","model":"qwen/qwen3-embedding-8b","remote":{"baseUrl":"https://api.redpill.ai/v1"},"fallback":"none"}}}}
+{"gateway":{"mode":"local","bind":"lan","auth":{"token":"$BOOT_TOKEN"},"controlUi":{"dangerouslyDisableDeviceAuth":true}},"update":{"checkOnStart":false},"agents":{"defaults":{"model":{"primary":"openai-codex/gpt-5.2"},"memorySearch":{"provider":"openai","model":"qwen/qwen3-embedding-8b","remote":{"baseUrl":"https://api.redpill.ai/v1"},"fallback":"none"}}},"models":{"providers":{"openai-codex":{"baseUrl":"https://chatgpt.com/backend-api","api":"openai-codex-responses","models":[{"id":"gpt-5.2","name":"GPT-5.2 (Codex)"}]}}}}
 CONF
   }
   echo "Created config at $CONFIG_FILE (token: ${GATEWAY_AUTH_TOKEN:+derived}${GATEWAY_AUTH_TOKEN:-random})"
@@ -257,6 +294,19 @@ if [ "$S3_MODE" = "sync" ]; then
     done
   ) &
 fi
+
+# --- Patch OpenClaw to accept openai-codex-responses API type ---
+# The pi-ai library supports openai-codex-responses but OpenClaw's config validation
+# schema doesn't include it. This patches the validation to accept it.
+echo "Patching OpenClaw validation for openai-codex-responses..."
+OPENCLAW_DIST="/usr/lib/node_modules/openclaw/dist"
+for f in "$OPENCLAW_DIST"/*.js "$OPENCLAW_DIST"/commands/*.js "$OPENCLAW_DIST"/plugin-sdk/*.js; do
+  [ -f "$f" ] || continue
+  if grep -q 'z\.literal("bedrock-converse-stream")' "$f" 2>/dev/null; then
+    sed -i 's/z\.literal("bedrock-converse-stream")/z.literal("bedrock-converse-stream"),z.literal("openai-codex-responses")/g' "$f"
+  fi
+done
+echo "OpenClaw validation patched."
 
 # Start openclaw gateway (foreground)
 exec openclaw gateway run --bind lan --port 18789 --force

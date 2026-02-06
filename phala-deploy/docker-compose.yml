@@ -1,6 +1,6 @@
 services:
   openclaw:
-    image: h4x3rotab/openclaw-cvm@sha256:a0683d82698fd42cac64123769819a86f8a72495c54ca7f4f292842af5e27cfa
+    image: marvintong/openclaw-cvm@sha256:5844d3006ed86d3dd0c10df4b66988ee072deb8b498d0d4779134216bd4bf5ca
     # For local builds, uncomment below and comment out image:
     # build:
     #   context: ..
@@ -18,8 +18,14 @@ services:
       NODE_ENV: production
       # Master key — derives rclone crypt passwords + gateway auth token via HKDF
       MASTER_KEY: ${MASTER_KEY:-}
-      # Redpill AI provider
+      # AI Providers
       REDPILL_API_KEY: ${REDPILL_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Chat Channels
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       # Encrypted S3 storage (optional — omit S3_BUCKET to use local volume)
       S3_BUCKET: ${S3_BUCKET:-}
       S3_PREFIX: ${S3_PREFIX:-openclaw-data}
