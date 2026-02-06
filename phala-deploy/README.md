@@ -245,6 +245,14 @@ Your SSH public key is automatically injected into the container from the CVM ho
 
 **Note:** The entrypoint creates symlinks `~/.openclaw → /data/openclaw` and `~/.config → /data/.config`, so `openclaw` commands work without any env var prefixes.
 
+### Restart policy
+
+The entrypoint keeps SSH available even if the gateway crashes and restarts it with backoff.
+
+- `OPENCLAW_GATEWAY_RESTART_DELAY` sets the initial backoff in seconds (default `5`).
+- `OPENCLAW_GATEWAY_RESTART_MAX_DELAY` caps backoff in seconds (default `60`).
+- `OPENCLAW_GATEWAY_RESET_AFTER` resets backoff after a stable run (seconds, default `600`).
+
 ## Updating
 
 To update the OpenClaw version:
@@ -268,6 +276,11 @@ phala deploy --cvm-id <your-cvm-uuid> -c docker-compose.yml
 ```
 
 The new image pulls in the background. The old container keeps running until the new one is ready.
+
+**Verification notes:**
+
+- `phala deploy` is the reliable rollout path. `phala cvms logs` can lag, so confirm with a live version check via `cvm-exec` (for example: `./phala-deploy/cvm-exec 'openclaw --version'`).
+- `rv-exec` with `CVM_SSH_HOST` is sufficient to verify the live container without exposing secrets.
 
 ## Disaster recovery
 

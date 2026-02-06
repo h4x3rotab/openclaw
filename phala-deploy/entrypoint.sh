@@ -258,5 +258,52 @@ if [ "$S3_MODE" = "sync" ]; then
   ) &
 fi
 
-# Start openclaw gateway (foreground)
-exec openclaw gateway run --bind lan --port 18789 --force
+# Gateway supervision (keep container alive for SSH even if gateway fails).
+GATEWAY_RESTART_DELAY="${OPENCLAW_GATEWAY_RESTART_DELAY:-5}"
+GATEWAY_RESTART_MAX_DELAY="${OPENCLAW_GATEWAY_RESTART_MAX_DELAY:-60}"
+GATEWAY_RESET_AFTER="${OPENCLAW_GATEWAY_RESET_AFTER:-600}"
+
+shutdown() {
+  echo "Shutting down..."
+  if [ -n "${GATEWAY_PID:-}" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
+    kill "$GATEWAY_PID" 2>/dev/null || true
+  fi
+  if [ -n "${DOCKERD_PID:-}" ] && kill -0 "$DOCKERD_PID" 2>/dev/null; then
+    kill "$DOCKERD_PID" 2>/dev/null || true
+  fi
+  exit 0
+}
+
+trap shutdown INT TERM
+
+backoff="$GATEWAY_RESTART_DELAY"
+set +e
+while true; do
+  echo "Starting OpenClaw gateway..."
+  start_time=$(date +%s)
+  openclaw gateway run --bind lan --port 18789 --force &
+  GATEWAY_PID=$!
+  wait "$GATEWAY_PID"
+  exit_code=$?
+  end_time=$(date +%s)
+  runtime=$((end_time - start_time))
+  echo "Gateway exited with code ${exit_code}."
+
+  if [ "$runtime" -ge "$GATEWAY_RESET_AFTER" ]; then
+    backoff="$GATEWAY_RESTART_DELAY"
+    echo "Gateway ran for ${runtime}s; resetting backoff to ${backoff}s."
+  else
+    if [ "$backoff" -lt 1 ]; then
+      backoff=1
+    fi
+    if [ "$backoff" -lt "$GATEWAY_RESTART_MAX_DELAY" ]; then
+      backoff=$((backoff * 2))
+      if [ "$backoff" -gt "$GATEWAY_RESTART_MAX_DELAY" ]; then
+        backoff="$GATEWAY_RESTART_MAX_DELAY"
+      fi
+    fi
+  fi
+
+  echo "Restarting gateway in ${backoff}s..."
+  sleep "$backoff"
+done
