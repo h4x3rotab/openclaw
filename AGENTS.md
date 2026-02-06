@@ -228,6 +228,8 @@
 - SSH sessions: symlinks handle paths automatically (`~/.openclaw → /data/openclaw`), no env var prefix needed.
 - dstack `app-compose.sh` can fail with "container name already in use" if old container auto-restarts before compose runs. Check `journalctl -u app-compose` on the VM host.
 - Use `phala cvms logs <uuid>` (serial logs) to monitor deploy progress — don't rely on SSH during reboots.
+- `phala deploy` is the reliable rollout path. `phala cvms logs` can lag, so confirm with a live version check via `cvm-exec`.
+- `rv-exec` with `CVM_SSH_HOST` is sufficient to verify the live container without exposing secrets.
 - npm package: Docker images install from a local tarball at `phala-deploy/openclaw.tgz`. To update: bump version in `package.json` (if needed), run `pnpm build && pnpm ui:install && pnpm ui:build`, then `npm pack` and move the tarball into `phala-deploy/openclaw.tgz` before rebuilding the image.
 - `node-llama-cpp` has been removed from `optionalDependencies`. Local embeddings use the Redpill API (`qwen/qwen3-embedding-8b`) instead. The `src/memory/embeddings.ts` code gracefully handles missing `node-llama-cpp` (lazy `import()` with fallback).
 - Memory search embedding config: set `agents.defaults.memorySearch.provider=openai`, `model=qwen/qwen3-embedding-8b`, `remote.baseUrl=https://api.redpill.ai/v1`, `remote.apiKey=<key>`, `fallback=none`. The OpenAI embedding provider supports any OpenAI-compatible endpoint via `remote.baseUrl`.
