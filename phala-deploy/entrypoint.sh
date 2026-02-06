@@ -126,9 +126,22 @@ fi
 # --- Set up home directory symlinks ---
 # ~/.openclaw → /data/openclaw (state dir)
 # ~/.config → /data/.config (plugin configs)
-mkdir -p "$DATA_DIR/openclaw" "$DATA_DIR/.config"
-ln -sfn "$DATA_DIR/openclaw" /root/.openclaw
-ln -sfn "$DATA_DIR/.config" /root/.config
+ensure_symlink_dir() {
+  target="$1"
+  link="$2"
+
+  mkdir -p "$target"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    if [ "$(ls -A "$link" 2>/dev/null)" ]; then
+      find "$link" -mindepth 1 -maxdepth 1 -exec mv -t "$target" {} + || true
+    fi
+    rmdir "$link" 2>/dev/null || rm -rf "$link"
+  fi
+  ln -sfn "$target" "$link"
+}
+
+ensure_symlink_dir "$DATA_DIR/openclaw" /root/.openclaw
+ensure_symlink_dir "$DATA_DIR/.config" /root/.config
 echo "Home symlinks created (~/.openclaw, ~/.config → $DATA_DIR)"
 
 # Bootstrap config if none exists — generates full Redpill provider + model catalog
