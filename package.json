@@ -1,6 +1,6 @@
 {
-  "name": "@h4x3rotab/openclaw",
-  "version": "2026.2.3",
+  "name": "openclaw",
+  "version": "2026.2.3-phala.1",
   "description": "WhatsApp gateway CLI (Baileys web) with Pi RPC agent",
   "keywords": [],
   "license": "MIT",
@@ -22,9 +22,22 @@
   ],
   "type": "module",
   "main": "dist/index.js",
+  "typesVersions": {
+    "*": {
+      "plugin-sdk": [
+        "src/plugin-sdk/index.ts"
+      ]
+    }
+  },
   "exports": {
-    ".": "./dist/index.js",
-    "./plugin-sdk": "./dist/plugin-sdk/index.js",
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./plugin-sdk": {
+      "types": "./src/plugin-sdk/index.ts",
+      "default": "./dist/plugin-sdk/index.js"
+    },
     "./cli-entry": "./openclaw.mjs"
   },
   "scripts": {
@@ -151,9 +164,6 @@
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
-  "optionalDependencies": {
-    "@napi-rs/canvas": "^0.1.88"
-  },
   "devDependencies": {
     "@grammyjs/types": "^3.23.0",
     "@lit-labs/signals": "^0.2.0",
@@ -180,6 +190,9 @@
   "peerDependencies": {
     "@napi-rs/canvas": "^0.1.89",
     "node-llama-cpp": "3.15.1"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^0.1.88"
   },
   "overrides": {
     "tar": "7.5.7"

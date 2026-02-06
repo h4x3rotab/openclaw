@@ -63,9 +63,6 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
-      '@napi-rs/canvas':
-        specifier: ^0.1.89
-        version: 0.1.89
       '@sinclair/typebox':
         specifier: 0.34.47
         version: 0.34.47
@@ -244,6 +241,10 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.2.0)(@vitest/browser-playwright@4.0.18)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+    optionalDependencies:
+      '@napi-rs/canvas':
+        specifier: ^0.1.88
+        version: 0.1.89
 
   extensions/bluebubbles:
     devDependencies:
@@ -6953,6 +6954,7 @@ snapshots:
       '@napi-rs/canvas-linux-x64-musl': 0.1.89
       '@napi-rs/canvas-win32-arm64-msvc': 0.1.89
       '@napi-rs/canvas-win32-x64-msvc': 0.1.89
+    optional: true
 
   '@napi-rs/wasm-runtime@1.1.1':
     dependencies:
