@@ -41,6 +41,7 @@ import {
 import { sendUnauthorized } from "./http-common.js";
 import { getBearerToken, getHeader } from "./http-utils.js";
 import { resolveGatewayClientIp } from "./net.js";
+import { handleMuxInboundHttpRequest } from "./mux-http.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
@@ -326,6 +327,9 @@ export function createGatewayHttpServer(opts: {
           trustedProxies,
         })
       ) {
+        return;
+      }
+      if (await handleMuxInboundHttpRequest(req, res)) {
         return;
       }
       if (await handleSlackHttpRequest(req, res)) {
