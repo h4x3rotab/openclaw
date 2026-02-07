@@ -147,6 +147,22 @@ describe("handleCommands /allowlist", () => {
   });
 });
 
+describe("/commands on mux telegram", () => {
+  const cfg = {
+    commands: { text: true },
+  } as unknown as OpenClawConfig;
+
+  it("uses telegram pagination UI when surface is mux and provider is telegram", async () => {
+    const params = buildParams("/commands", cfg, { Provider: "telegram", Surface: "mux" });
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    const buttons = (result.reply?.channelData as { telegram?: { buttons?: unknown[][] } })
+      ?.telegram?.buttons;
+    expect(buttons).toBeDefined();
+    expect(buttons?.length).toBeGreaterThan(0);
+  });
+});
+
 describe("/models command", () => {
   const cfg = {
     commands: { text: true },

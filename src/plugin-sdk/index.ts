@@ -114,6 +114,7 @@ export {
   normalizeAllowFrom,
   requireOpenAllowFrom,
 } from "../config/zod-schema.core.js";
+export { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 export { ToolPolicySchema } from "../config/zod-schema.agent-runtime.js";
 export type { RuntimeEnv } from "../runtime.js";
 export type { WizardPrompter } from "../wizard/prompts.js";
@@ -300,6 +301,7 @@ export {
   resolveTelegramAccount,
   type ResolvedTelegramAccount,
 } from "../telegram/accounts.js";
+export { renderTelegramHtmlText } from "../telegram/format.js";
 export { telegramOnboardingAdapter } from "../channels/plugins/onboarding/telegram.js";
 export {
   looksLikeTelegramTargetId,
@@ -383,6 +385,7 @@ export {
   resolveFeishuGroupRequireMention,
 } from "../feishu/config.js";
 export { feishuOutbound } from "../channels/plugins/outbound/feishu.js";
+export { isMuxEnabled, sendViaMux } from "../channels/plugins/outbound/mux.js";
 export { normalizeFeishuTarget } from "../channels/plugins/normalize/feishu.js";
 export { probeFeishu, type FeishuProbe } from "../feishu/probe.js";
 export { monitorFeishuProvider } from "../feishu/monitor.js";
