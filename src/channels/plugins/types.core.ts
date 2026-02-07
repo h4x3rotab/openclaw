@@ -333,5 +333,6 @@ export type ChannelPollContext = {
   to: string;
   poll: PollInput;
   accountId?: string | null;
+  sessionKey?: string | null;
   threadId?: string | null;
 };
