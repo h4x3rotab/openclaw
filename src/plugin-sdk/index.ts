@@ -385,5 +385,6 @@ export {
 } from "../line/markdown-to-line.js";
 export type { ProcessedLineMessage } from "../line/markdown-to-line.js";
 
+export { isMuxEnabled, sendViaMux } from "../channels/plugins/outbound/mux.js";
 // Media utilities
 export { loadWebMedia, type WebMediaResult } from "../web/media.js";
