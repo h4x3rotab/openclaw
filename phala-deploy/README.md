@@ -139,6 +139,16 @@ Docker daemon ready.
 
 After that, your agent is live on Telegram and you can chat with it there.
 
+## OAuth3 execution proxy (optional)
+
+The compose includes an [oauth3-proxy](https://github.com/claw-tee-dah/oauth3-openclaw) sidecar for human-approved secret injection. When your agent needs to run code that requires API keys, it POSTs to the proxy, you approve via Telegram, and the proxy executes the skill with secrets injected — the agent never sees the plaintext keys.
+
+The proxy runs in `direct` mode (Deno executes natively, no Docker needed — the TEE provides isolation). It has no external ports; only the openclaw container can reach it.
+
+**To enable**, add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to your `secrets/.env`. The agent can then submit execution requests to `http://oauth3-proxy:3737/execute`.
+
+**To disable**, leave `TELEGRAM_BOT_TOKEN` empty. The proxy starts but does nothing without a bot token.
+
 ## How S3 storage works
 
 The entrypoint tries two S3 sync strategies in order:

@@ -35,7 +35,33 @@ services:
       OPENCLAW_RAW_STREAM: ${OPENCLAW_RAW_STREAM:-}
       OPENCLAW_ANTHROPIC_PAYLOAD_LOG: ${OPENCLAW_ANTHROPIC_PAYLOAD_LOG:-}
     restart: unless-stopped
+    networks:
+      - internal
+
+  # OAuth3 execution proxy (optional — human-approved secret injection via Telegram)
+  # Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in secrets/.env
+  # Agent reaches it at http://oauth3-proxy:3737/execute
+  # See: https://github.com/claw-tee-dah/oauth3-openclaw
+  oauth3-proxy:
+    image: ghcr.io/claw-tee-dah/oauth3-proxy:latest
+    container_name: oauth3-proxy
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      PORT: "3737"
+      DB_PATH: /data/proxy.db
+      EXECUTOR_MODE: direct
+    volumes:
+      - oauth3_data:/data
+    restart: unless-stopped
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   openclaw_data:
   docker_data:
+  oauth3_data:
