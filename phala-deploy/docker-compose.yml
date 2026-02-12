@@ -41,9 +41,9 @@ services:
   # OAuth3 execution proxy (optional — human-approved secret injection via Telegram)
   # Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in secrets/.env
   # Agent reaches it at http://oauth3-proxy:3737/execute
-  # See: https://github.com/claw-tee-dah/oauth3-openclaw
+  # See: https://github.com/amiller/oauth3-openclaw
   oauth3-proxy:
-    image: ghcr.io/claw-tee-dah/oauth3-proxy:latest
+    image: ghcr.io/amiller/oauth3-proxy@sha256:3bc0f48ddd7e340c4edf0b3c0fd549659fc2bad82ee6e35c6a12bfbd631fcbe2
     container_name: oauth3-proxy
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

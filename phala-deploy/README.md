@@ -141,7 +141,7 @@ After that, your agent is live on Telegram and you can chat with it there.
 
 ## OAuth3 execution proxy (optional)
 
-The compose includes an [oauth3-proxy](https://github.com/claw-tee-dah/oauth3-openclaw) sidecar for human-approved secret injection. When your agent needs to run code that requires API keys, it POSTs to the proxy, you approve via Telegram, and the proxy executes the skill with secrets injected — the agent never sees the plaintext keys.
+The compose includes an [oauth3-proxy](https://github.com/amiller/oauth3-openclaw) sidecar for human-approved secret injection. When your agent needs to run code that requires API keys, it POSTs to the proxy, you approve via Telegram, and the proxy executes the skill with secrets injected — the agent never sees the plaintext keys.
 
 The proxy runs in `direct` mode (Deno executes natively, no Docker needed — the TEE provides isolation). It has no external ports; only the openclaw container can reach it.
 
