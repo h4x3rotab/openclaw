@@ -33,7 +33,7 @@ function resolveEffectiveSurface(params: Parameters<CommandHandler>[0]): string 
   if (surface === "mux" && params.ctx.Provider === "telegram") {
     return "telegram";
   }
-  return surface;
+  return surface ?? params.ctx.Provider ?? "unknown";
 }
 
 export const handleCommandsListCommand: CommandHandler = async (params, allowTextCommands) => {
