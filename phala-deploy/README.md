@@ -153,13 +153,15 @@ Use this when rolling out shared mux bots plus tenant OpenClaw instances.
    - mux SQLite/log path (`/data`)
    - WhatsApp auth snapshot path (`/wa-auth/default`)
 2. Inject mux runtime secrets from `rv`:
-   - `MUX_ADMIN_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`
+   - `MUX_API_KEY` (must match tenant OpenClaw `gateway.http.endpoints.mux.token`)
+   - optional: `MUX_ADMIN_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`
 3. For each tenant OpenClaw instance:
    - set `gateway.http.endpoints.mux.baseUrl`
    - set `gateway.http.endpoints.mux.token=<tenantApiKey>`
    - enable channel account `mux` for `telegram`, `discord`, `whatsapp`
-4. Bootstrap tenant in mux:
-   - `POST /v1/admin/tenants/bootstrap` with `tenantId`, `apiKey`, `inboundUrl`
+4. Set inbound target wiring to OpenClaw:
+   - `./phala-deploy/set-inbound-target.sh`
+   - if using admin control-plane mode, you can alternatively use `POST /v1/admin/tenants/bootstrap`
 5. Validate with live checks:
    - pair chat using token (`/v1/pairings/token`)
    - send `/help` via mux channel
@@ -278,25 +280,20 @@ The entrypoint keeps SSH available even if the gateway crashes and restarts it w
 
 ## Updating
 
-To update the OpenClaw version:
+Use the dedicated runbook:
 
-1. Build a tarball and place it at `phala-deploy/openclaw.tgz`:
+- `phala-deploy/UPDATE_RUNBOOK.md`
 
-```sh
-pnpm build
-pnpm ui:install
-pnpm ui:build
-npm pack
-mv openclaw-<version>.tgz phala-deploy/openclaw.tgz
-```
+Minimal sequence:
 
-2. Rebuild the Docker image
-3. Push to your registry
-4. Redeploy:
-
-```sh
-phala deploy --cvm-id <your-cvm-uuid> -c docker-compose.yml
-```
+1. Build/pin images:
+   - `./phala-deploy/build-pin-image.sh`
+   - `./phala-deploy/build-pin-mux-image.sh` (if mux changed)
+2. Load rollout targets and deploy:
+   - `set -a; source phala-deploy/.env.rollout-targets; set +a`
+   - `./phala-deploy/cvm-rollout-targets.sh all --wait`
+3. Re-sync mux inbound target:
+   - `./phala-deploy/set-inbound-target.sh`
 
 The new image pulls in the background. The old container keeps running until the new one is ready.
 
@@ -304,6 +301,7 @@ The new image pulls in the background. The old container keeps running until the
 
 - `phala deploy` is the reliable rollout path. `phala cvms logs` can lag, so confirm with a live version check via `cvm-exec` (for example: `./phala-deploy/cvm-exec 'openclaw --version'`).
 - `rv-exec` with `CVM_SSH_HOST` is sufficient to verify the live container without exposing secrets.
+- Full runbook: `phala-deploy/UPDATE_RUNBOOK.md`.
 
 ## Disaster recovery
 
@@ -316,16 +314,23 @@ If your CVM is destroyed (S3 mode only):
 
 ## File reference
 
-| File                 | Purpose                                                        |
-| -------------------- | -------------------------------------------------------------- |
-| `Dockerfile`         | CVM image (Ubuntu 24.04 + Node 22 + rclone + Docker-in-Docker) |
-| `entrypoint.sh`      | Boot sequence: key derivation, S3 mount, SSH, Docker, gateway  |
-| `docker-compose.yml` | Compose file for `phala deploy`                                |
-| `secrets/.env`       | Legacy local env-file workflow (prefer `rv-exec --dotenv`)     |
-| `cvm-ssh`            | Interactive SSH into the container                             |
-| `cvm-exec`           | Run a command in the container                                 |
-| `cvm-scp`            | Copy files to/from the container                               |
-| `S3_STORAGE.md`      | Detailed S3 encryption documentation                           |
+| File                     | Purpose                                                               |
+| ------------------------ | --------------------------------------------------------------------- |
+| `Dockerfile`             | CVM image (Ubuntu 24.04 + Node 22 + rclone + Docker-in-Docker)        |
+| `entrypoint.sh`          | Boot sequence: key derivation, S3 mount, SSH, Docker, gateway         |
+| `docker-compose.yml`     | Compose file for `phala deploy`                                       |
+| `mux-server-compose.yml` | Compose file for mux-server CVM deployment                            |
+| `build-pin-image.sh`     | Rebuild tarball + image, push, and pin compose image digest           |
+| `build-pin-mux-image.sh` | Rebuild mux image, push, and pin mux compose digest                   |
+| `cvm-rollout.sh`         | Standardized multi-CVM deploy flow with `rv-exec` env materialization |
+| `cvm-rollout-targets.sh` | Role-aware deploy wrapper with CVM role safety checks                 |
+| `set-inbound-target.sh`  | Wire mux tenant target to OpenClaw `/v1/mux/inbound`                  |
+| `UPDATE_RUNBOOK.md`      | Dedicated repeatable update runbook                                   |
+| `secrets/.env`           | Legacy local env-file workflow (prefer `rv-exec --dotenv`)            |
+| `cvm-ssh`                | Interactive SSH into the container                                    |
+| `cvm-exec`               | Run a command in the container                                        |
+| `cvm-scp`                | Copy files to/from the container                                      |
+| `S3_STORAGE.md`          | Detailed S3 encryption documentation                                  |
 
 ## Troubleshooting
 

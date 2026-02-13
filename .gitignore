@@ -96,5 +96,10 @@ mux-server/data/
 # local operator env
 .global.env
 .project.env
+.env.rollout
+phala-deploy/.env.rollout
+.env.rollout-targets
+phala-deploy/.env.rollout-targets
+phala-deploy/openclaw.tgz
 .rv.json
 .claude/
