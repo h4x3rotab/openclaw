@@ -31,8 +31,8 @@ This stack mirrors the production shape on one machine:
   - `MUX_ADMIN_TOKEN`
   - `TELEGRAM_BOT_TOKEN`
   - `DISCORD_BOT_TOKEN`
-- A valid WhatsApp auth dir at:
-  - required override: `WA_AUTH_SOURCE=<path-to-local-test-auth>`
+- Optional: a valid WhatsApp auth dir if you want to test WhatsApp:
+  - `WA_AUTH_SOURCE=<path-to-local-test-auth>`
 
 ## Bring Up
 
@@ -42,11 +42,11 @@ This stack mirrors the production shape on one machine:
 
 What `up.sh` does:
 
-1. Copies WhatsApp auth snapshot into local state.
+1. Optionally copies WhatsApp auth snapshot into local state (if `WA_AUTH_SOURCE` is set).
 2. Injects secrets with `rv-exec` for compose interpolation.
 3. Runs `docker compose up -d --build --remove-orphans`.
 
-`WA_AUTH_SOURCE` is required. Set it inline or in `phala-deploy/local-mux-e2e/.env.local` (from `.env.example`).
+To enable WhatsApp inbound, set `WA_AUTH_SOURCE` inline or in `phala-deploy/local-mux-e2e/.env.local` (from `.env.example`).
 
 ## Bootstrap One Tenant
 
