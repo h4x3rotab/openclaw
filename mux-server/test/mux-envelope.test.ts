@@ -129,7 +129,7 @@ describe("mux envelope helpers", () => {
   test("builds whatsapp inbound envelope without rewriting body", () => {
     const envelope = buildWhatsAppInboundEnvelope({
       messageId: "wa-1",
-      sessionKey: "wa:chat:120363000000@g.us",
+      sessionKey: "agent:main:whatsapp:group:120363000000@g.us",
       openclawAccountId: "mux",
       rawBody: "  /help  ",
       fromId: "15550001111",

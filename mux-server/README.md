@@ -377,7 +377,7 @@ WhatsApp body variant (advanced: override derived sessionKey):
 ```json
 {
   "channel": "whatsapp",
-  "sessionKey": "wa:chat:15550001111@s.whatsapp.net",
+  "sessionKey": "agent:main:whatsapp:direct:+15550001111",
   "ttlSec": 900
 }
 ```
@@ -434,13 +434,13 @@ Canonical session key shapes (current mux-server behavior):
   - Guild channel: `agent:<agentId>:discord:channel:<channelId>`
   - Guild thread: `agent:<agentId>:discord:channel:<threadId>` (Discord threads are channels)
 - WhatsApp:
-  - Chat: `wa:chat:<jid>`
-  - Group: `wa:group:<jid>`
+  - Direct chat: `agent:<agentId>:whatsapp:direct:<e164>`
+  - Group chat: `agent:<agentId>:whatsapp:group:<groupJid>`
 
 Notes:
 
 - Derived session keys currently default to `agentId=main`.
-- WhatsApp session keys are not `agent:*` scoped yet; they match the current OpenClaw WhatsApp key scheme.
+- WhatsApp DM peer id uses E.164 (`+15551234567`) when available; group peer id uses the group JID (`120363...@g.us`).
 
 ### TODO: Agent-Targeted Pairing Tokens (Recommended Future Direction)
 

@@ -3086,8 +3086,45 @@ function parseWhatsAppRouteKey(routeKey: string): WhatsAppBoundRoute | null {
   return { accountId, chatJid };
 }
 
-function deriveWhatsAppSessionKey(chatJid: string, chatType: "direct" | "group"): string {
-  return chatType === "group" ? `wa:group:${chatJid}` : `wa:chat:${chatJid}`;
+function normalizeWhatsAppDirectPeerId(value: string | undefined): string | null {
+  const raw = readNonEmptyString(value);
+  if (!raw) {
+    return null;
+  }
+  const withoutPrefix = raw.replace(/^whatsapp:/i, "").trim();
+
+  const jidMatch = withoutPrefix.match(/^(\d+)(?::\d+)?@(s\.whatsapp\.net|hosted)$/i);
+  if (jidMatch?.[1]) {
+    return `+${jidMatch[1]}`;
+  }
+
+  const lidMatch = withoutPrefix.match(/^(\d+)(?::\d+)?@(lid|hosted\.lid)$/i);
+  if (lidMatch) {
+    return null;
+  }
+
+  const digits = withoutPrefix.replace(/[^\d+]/g, "");
+  if (!digits) {
+    return null;
+  }
+  const normalized = digits.startsWith("+") ? `+${digits.slice(1)}` : `+${digits}`;
+  return normalized.length > 1 ? normalized : null;
+}
+
+function deriveWhatsAppSessionKey(params: {
+  chatJid: string;
+  chatType: "direct" | "group";
+  directPeerId?: string;
+}): string {
+  if (params.chatType === "group") {
+    return `agent:main:whatsapp:group:${params.chatJid}`;
+  }
+  const peerId =
+    normalizeWhatsAppDirectPeerId(params.directPeerId) ??
+    normalizeWhatsAppDirectPeerId(params.chatJid) ??
+    readNonEmptyString(params.directPeerId) ??
+    params.chatJid;
+  return `agent:main:whatsapp:direct:${peerId}`;
 }
 
 function parseDiscordOutboundTarget(value: unknown): DiscordOutboundTarget | null {
@@ -3697,6 +3734,7 @@ function claimWhatsAppPairingToken(params: {
   chatJid: string;
   accountId: string;
   chatType: "direct" | "group";
+  directPeerId?: string;
 }): { tenantId: string; bindingId: string; routeKey: string; sessionKey: string } | null {
   return runTokenClaimTransaction(() => {
     const now = Date.now();
@@ -3741,7 +3779,12 @@ function claimWhatsAppPairingToken(params: {
 
     const preferredSessionKey = readNonEmptyString(row.session_key);
     const sessionKey =
-      preferredSessionKey || deriveWhatsAppSessionKey(params.chatJid, params.chatType);
+      preferredSessionKey ||
+      deriveWhatsAppSessionKey({
+        chatJid: params.chatJid,
+        chatType: params.chatType,
+        directPeerId: params.directPeerId,
+      });
     stmtUpsertSessionRoute.run(
       tenantId,
       "whatsapp",
@@ -4789,6 +4832,7 @@ async function handleWhatsAppBotControlCommand(params: {
   chatJid: string;
   accountId: string;
   chatType: "direct" | "group";
+  directPeerId?: string;
   binding: { tenantId: string; bindingId: string; routeKey: string } | null;
 }) {
   if (params.command.kind === "help") {
@@ -4876,6 +4920,7 @@ async function handleWhatsAppBotControlCommand(params: {
     chatJid: params.chatJid,
     accountId: params.accountId,
     chatType: params.chatType,
+    directPeerId: params.directPeerId,
   });
   const notice = claimed
     ? renderPairingSuccessNotice("whatsapp")
@@ -5903,6 +5948,10 @@ async function forwardWhatsAppInboundMessage(message: WebInboundMessage) {
   }
   const accountId = readNonEmptyString(message.accountId) ?? whatsappAccountId;
   const chatType = message.chatType === "group" ? "group" : "direct";
+  const directPeerId =
+    chatType === "direct"
+      ? (readNonEmptyString(message.senderE164) ?? readNonEmptyString(message.from) ?? undefined)
+      : undefined;
   const body = typeof message.body === "string" ? message.body : "";
   const binding = resolveWhatsAppBindingForIncoming({
     chatJid,
@@ -5916,6 +5965,7 @@ async function forwardWhatsAppInboundMessage(message: WebInboundMessage) {
         chatJid,
         accountId,
         chatType,
+        directPeerId,
         binding,
       });
     } catch (error) {
@@ -5959,6 +6009,7 @@ async function forwardWhatsAppInboundMessage(message: WebInboundMessage) {
       chatJid,
       accountId,
       chatType,
+      directPeerId,
     });
     if (!claimed) {
       try {
@@ -6054,7 +6105,11 @@ async function forwardWhatsAppInboundMessage(message: WebInboundMessage) {
   ) as { session_key?: unknown } | undefined;
   const sessionKey =
     (typeof existingRoute?.session_key === "string" && existingRoute.session_key.trim()) ||
-    deriveWhatsAppSessionKey(chatJid, chatType);
+    deriveWhatsAppSessionKey({
+      chatJid,
+      chatType,
+      directPeerId,
+    });
   stmtUpsertSessionRoute.run(
     binding.tenantId,
     "whatsapp",

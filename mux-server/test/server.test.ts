@@ -1379,7 +1379,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-WA-TYPING",
-      sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+      sessionKey: "agent:main:whatsapp:direct:+15550001111",
     });
     expect(claim.status).toBe(200);
 
@@ -1393,7 +1393,7 @@ describe("mux server", () => {
         op: "action",
         action: "typing",
         channel: "whatsapp",
-        sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+        sessionKey: "agent:main:whatsapp:direct:+15550001111",
       }),
     });
 
@@ -4432,7 +4432,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "whatsapp",
-      sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+      sessionKey: "agent:main:whatsapp:direct:+15550001111",
       ttlSec: 120,
     });
     expect(tokenResponse.status).toBe(200);
@@ -4462,7 +4462,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-WA-RAW-REQUIRED",
-      sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+      sessionKey: "agent:main:whatsapp:direct:+15550001111",
     });
     expect(claim.status).toBe(200);
 
@@ -4474,7 +4474,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "whatsapp",
-        sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+        sessionKey: "agent:main:whatsapp:direct:+15550001111",
         text: "hello without raw",
       }),
     });
@@ -4502,7 +4502,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-WA-1",
-      sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+      sessionKey: "agent:main:whatsapp:direct:+15550001111",
     });
     expect(claim.status).toBe(200);
 
@@ -4514,7 +4514,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "whatsapp",
-        sessionKey: "wa:chat:15550001111@s.whatsapp.net",
+        sessionKey: "agent:main:whatsapp:direct:+15550001111",
         raw: {
           whatsapp: {
             send: {
