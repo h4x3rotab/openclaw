@@ -118,8 +118,10 @@ log "resolved digest: $DIGEST"
 TMP_FILE="$(mktemp)"
 awk -v digest="$DIGEST" '
   BEGIN { in_mux = 0; updated = 0 }
-  /^  mux-server:/ { in_mux = 1 }
+  # Reset on every top-level service key, then re-enable within mux-server.
+  # Order matters: the mux-server line matches both patterns.
   /^  [^[:space:]].*:/ { in_mux = 0 }
+  /^  mux-server:/ { in_mux = 1 }
   {
     if (in_mux && !updated && $1 == "image:") {
       print "    image: " digest
