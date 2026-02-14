@@ -100,6 +100,11 @@ node --import tsx mux-server/src/server.ts
 - `MUX_DISCORD_POLL_INTERVAL_MS` (default `2000`): Discord poll interval.
 - `MUX_DISCORD_BOOTSTRAP_LATEST` (default `true`): when enabled, skips historical backlog on cold start.
 - `MUX_DISCORD_INBOUND_MEDIA_MAX_BYTES` (default `5000000`): max file size fetched from Discord attachment URLs for inbound image attachments.
+- `MUX_DISCORD_GATEWAY_DM_ENABLED` (default `true`): enable Discord Gateway `MESSAGE_CREATE` handling for DM pairing/inbound.
+- `MUX_DISCORD_GATEWAY_GUILD_ENABLED` (default `true`): enable Discord Gateway `MESSAGE_CREATE` handling for guild + thread pairing/inbound.
+- `MUX_DISCORD_GATEWAY_INTENTS` (optional): override Discord Gateway intents bitmask (defaults include DM + guild message intents when guild mode is enabled).
+- `MUX_DISCORD_GATEWAY_RECONNECT_INITIAL_MS` (default `1000`): initial Discord Gateway reconnect backoff.
+- `MUX_DISCORD_GATEWAY_RECONNECT_MAX_MS` (default `30000`): max Discord Gateway reconnect backoff.
 - `MUX_WHATSAPP_ACCOUNT_ID` (default `default`): WhatsApp account id to monitor.
 - `MUX_WHATSAPP_AUTH_DIR` (optional): WhatsApp auth directory; defaults to OpenClaw's default web auth dir.
 - `MUX_WHATSAPP_INBOUND_MEDIA_MAX_BYTES` (default `5000000`): max file size read from saved WhatsApp inbound media files for image attachments.
@@ -243,7 +248,7 @@ Body:
   "op": "send",
   "action": null,
   "channel": "telegram",
-  "sessionKey": "tg:group:-100123:thread:2",
+  "sessionKey": "agent:main:telegram:group:-100123:topic:2",
   "to": "-100123",
   "text": "hello",
   "mediaUrl": "https://... or Telegram file_id",
@@ -292,7 +297,7 @@ Body:
 ```json
 {
   "code": "PAIR-1",
-  "sessionKey": "tg:group:-100123:thread:2"
+  "sessionKey": "agent:main:telegram:group:-100123"
 }
 ```
 
@@ -304,9 +309,13 @@ Response `200`:
   "channel": "telegram",
   "scope": "chat",
   "routeKey": "telegram:default:chat:-100123",
-  "sessionKey": "tg:group:-100123:thread:2"
+  "sessionKey": "agent:main:telegram:group:-100123"
 }
 ```
+
+Notes:
+
+- `sessionKey` is optional. If omitted, a binding is still created and mux will derive canonical session keys from inbound context.
 
 ### `POST /v1/pairings/token`
 
@@ -314,28 +323,56 @@ Headers:
 
 - `Authorization: Bearer <tenant_api_key>`
 
-Body:
+Body (recommended):
 
 ```json
 {
   "channel": "telegram",
-  "sessionKey": "tg:group:-100123:thread:2",
   "ttlSec": 900
 }
 ```
 
-Discord body variant:
+Body (advanced: override derived sessionKey):
+
+```json
+{
+  "channel": "telegram",
+  "sessionKey": "agent:main:telegram:group:-100123",
+  "ttlSec": 900
+}
+```
+
+Discord body variant (recommended):
 
 ```json
 {
   "channel": "discord",
-  "routeKey": "discord:default:dm:user:4242",
-  "sessionKey": "dc:dm:4242",
   "ttlSec": 900
 }
 ```
 
-WhatsApp body variant:
+Discord body variant (advanced: override derived sessionKey):
+
+```json
+{
+  "channel": "discord",
+  "sessionKey": "agent:main:discord:direct:4242",
+  "ttlSec": 900
+}
+```
+
+Discord token pairing is route-less: mux binds the first incoming Discord route that claims the token (requires Discord Gateway inbound enabled).
+
+WhatsApp body variant (recommended):
+
+```json
+{
+  "channel": "whatsapp",
+  "ttlSec": 900
+}
+```
+
+WhatsApp body variant (advanced: override derived sessionKey):
 
 ```json
 {
@@ -361,14 +398,67 @@ Response `200`:
 Behavior:
 
 - Token is opaque, one-time, and tenant-scoped.
+- `sessionKey` is optional. If omitted, mux derives a canonical `sessionKey` from the inbound route context at claim time.
+- If `sessionKey` is provided, mux treats it as a preferred override. This is powerful, but can break thread/topic parity. See "Session Keys (OpenClaw Parity)" below.
 - Telegram: user sends token to bot (manual token message or `/start <token>` deep link).
-- Discord: `routeKey` is required and currently supports `dm` route only (`discord:default:dm:user:<userId>`).
-- Discord: token issuance creates a pending DM binding; sending token in that DM activates it.
+- Discord: token claim route is always derived from the inbound message context (DM/guild/thread); there is no token-time route lock.
+- Discord supports DM and guild routes (`discord:default:dm:user:<userId>`, `discord:default:guild:<guildId>[:channel:<channelId>[:thread:<threadId>]]`).
+- Discord guild thread claims can anchor the binding at channel scope while still creating thread-scoped sessions for each thread.
 - WhatsApp: user sends token as a normal message in the target chat; mux binds that chat route to tenant/session.
 - Mux binds route from the incoming chat/topic to this tenant and consumes token.
 - The token message is not forwarded to OpenClaw; subsequent messages are forwarded.
 - Invalid or reused tokens return a user-facing notice (configured by `MUX_PAIRING_INVALID_TEXT`).
 - Unpaired slash commands (for example `/help`) return a pairing hint notice (configured by `MUX_UNPAIRED_HINT_TEXT`).
+
+### Session Keys (OpenClaw Parity)
+
+In mux mode, `sessionKey` is the stable conversation identity:
+
+- mux-server forwards inbound to OpenClaw `/v1/mux/inbound` with `payload.sessionKey`.
+- OpenClaw treats `sessionKey` as authoritative (it selects the agent and the session store key).
+- mux-server resolves outbound destinations from `(tenant, channel, sessionKey)` route mappings.
+
+Practical implications:
+
+- Session keys must be stable and derived from the inbound route context (DM vs group, channel vs thread/topic).
+- Reusing the same `sessionKey` for multiple routes will cause outbound ambiguity (last write wins).
+
+Canonical session key shapes (current mux-server behavior):
+
+- Telegram:
+  - Direct chat: `agent:<agentId>:telegram:direct:<chatId>`
+  - Group chat: `agent:<agentId>:telegram:group:<chatId>`
+  - Forum topic: `agent:<agentId>:telegram:group:<chatId>:topic:<topicId>` (topicId is Telegram `message_thread_id`)
+- Discord:
+  - DM: `agent:<agentId>:discord:direct:<userId>`
+  - Guild channel: `agent:<agentId>:discord:channel:<channelId>`
+  - Guild thread: `agent:<agentId>:discord:channel:<threadId>` (Discord threads are channels)
+- WhatsApp:
+  - Chat: `wa:chat:<jid>`
+  - Group: `wa:group:<jid>`
+
+Notes:
+
+- Derived session keys currently default to `agentId=main`.
+- WhatsApp session keys are not `agent:*` scoped yet; they match the current OpenClaw WhatsApp key scheme.
+
+### TODO: Agent-Targeted Pairing Tokens (Recommended Future Direction)
+
+Problem:
+
+- At token mint time, the control plane typically does not know the inbound sender ids (Telegram chat id, Discord user id, Discord channel/thread id, WhatsApp JID).
+- Requiring route context to mint tokens is the wrong direction: pairing is about establishing auth between a user account in a messenger app and a tenant/agent, not about preselecting the exact route.
+- Using `sessionKey` as a token-time override can silently break thread/topic parity by collapsing many routes into a single session key.
+
+Proposal:
+
+- Keep `POST /v1/pairings/token` as a simple "mint a token" API.
+- Add a first-class `agentId` (or `agentHint`) parameter and treat it as the pairing target.
+- At claim time (incoming message containing token), derive the canonical session key from `(agentId, inbound route context)`:
+  - Telegram topic: `agent:<agentId>:telegram:group:<chatId>:topic:<topicId>`
+  - Discord DM: `agent:<agentId>:discord:direct:<userId>`
+  - Discord guild channel/thread: `agent:<agentId>:discord:channel:<channelIdOrThreadId>`
+- Keep a separate explicit escape hatch (if ever needed) like `sessionKeyOverride`, but make the default behavior preserve per-thread/per-channel session isolation.
 
 ### `GET /v1/pairings`
 
@@ -731,7 +821,7 @@ Optional live outbound check:
 
 ```bash
 MUX_API_KEY=outbound-secret \
-MUX_SESSION_KEY='tg:group:-1003712260705:thread:2' \
+MUX_SESSION_KEY='agent:main:telegram:group:-1003712260705:topic:2' \
 MUX_EXPECT_STATUS=200 \
 pnpm --dir mux-server smoke
 ```

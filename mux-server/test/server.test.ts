@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { WebSocketServer, type WebSocket } from "ws";
 
 const muxDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -21,8 +22,13 @@ type RunningHttpServer = {
   server: http.Server;
 };
 
+type RunningWsServer = {
+  server: WebSocketServer;
+};
+
 const runningServers: RunningServer[] = [];
 const runningHttpServers: RunningHttpServer[] = [];
+const runningWsServers: RunningWsServer[] = [];
 
 async function getFreePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
@@ -153,6 +159,29 @@ async function stopHttpServer(running: RunningHttpServer): Promise<void> {
   });
 }
 
+async function startWsServer(
+  onConnection: (socket: WebSocket) => void | Promise<void>,
+): Promise<{ url: string; server: RunningWsServer }> {
+  const port = await getFreePort();
+  const wsServer = new WebSocketServer({ host: "127.0.0.1", port });
+  wsServer.on("connection", (socket) => {
+    void onConnection(socket);
+  });
+  await new Promise<void>((resolveServer, reject) => {
+    wsServer.once("listening", () => resolveServer());
+    wsServer.once("error", reject);
+  });
+  const running = { server: wsServer };
+  runningWsServers.push(running);
+  return { url: `ws://127.0.0.1:${port}`, server: running };
+}
+
+async function stopWsServer(running: RunningWsServer): Promise<void> {
+  await new Promise<void>((resolveServer) => {
+    running.server.close(() => resolveServer());
+  });
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -203,12 +232,18 @@ afterEach(async () => {
       await stopHttpServer(server);
     }
   }
+  while (runningWsServers.length > 0) {
+    const server = runningWsServers.pop();
+    if (server) {
+      await stopWsServer(server);
+    }
+  }
 });
 
 function requestPayload(text: string) {
   return {
     channel: "telegram",
-    sessionKey: "tg:group:-100123:thread:2",
+    sessionKey: "agent:main:telegram:group:-100123:topic:2",
     text,
   };
 }
@@ -271,7 +306,6 @@ async function createPairingToken(params: {
   apiKey: string;
   channel: string;
   sessionKey?: string;
-  routeKey?: string;
   ttlSec?: number;
 }) {
   return await fetch(`http://127.0.0.1:${params.port}/v1/pairings/token`, {
@@ -283,7 +317,6 @@ async function createPairingToken(params: {
     body: JSON.stringify({
       channel: params.channel,
       ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-      ...(params.routeKey ? { routeKey: params.routeKey } : {}),
       ...(params.ttlSec ? { ttlSec: params.ttlSec } : {}),
     }),
   });
@@ -629,7 +662,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-SHARED-TARGET-1",
-      sessionKey: "tg:group:-100558",
+      sessionKey: "agent:main:telegram:group:-100558",
     });
     expect(claim.status).toBe(200);
 
@@ -763,7 +796,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-ROTATE-TARGET-1",
-      sessionKey: "tg:group:-100557",
+      sessionKey: "agent:main:telegram:group:-100557",
     });
     expect(claim.status).toBe(200);
 
@@ -830,7 +863,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-1",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
     const claimBody = (await claim.json()) as {
@@ -843,7 +876,9 @@ describe("mux server", () => {
     expect(claimBody.scope).toBe("chat");
     expect(claimBody.routeKey).toBe("telegram:default:chat:-100123");
     expect(claimBody.bindingId).toContain("bind_");
-    expect((claimBody as Record<string, unknown>).sessionKey).toBe("tg:group:-100123:thread:2");
+    expect((claimBody as Record<string, unknown>).sessionKey).toBe(
+      "agent:main:telegram:group:-100123:topic:2",
+    );
 
     const listedBeforeUnbind = await listPairings({ port: server.port, apiKey: "tenant-a-key" });
     expect(listedBeforeUnbind.status).toBe(200);
@@ -932,7 +967,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-ROUTE-A",
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
     });
     expect(first.status).toBe(200);
 
@@ -940,7 +975,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-b-key",
       code: "PAIR-ROUTE-B",
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
     });
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({
@@ -966,7 +1001,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-3",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
 
@@ -978,7 +1013,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "telegram",
-        sessionKey: "tg:group:-100123:thread:2",
+        sessionKey: "agent:main:telegram:group:-100123:topic:2",
         to: "this-is-ignored-on-purpose",
         text: "",
       }),
@@ -1007,7 +1042,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-TG-BTN",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
 
@@ -1019,7 +1054,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "telegram",
-        sessionKey: "tg:group:-100123:thread:2",
+        sessionKey: "agent:main:telegram:group:-100123:topic:2",
         text: "paged commands",
       }),
     });
@@ -1068,7 +1103,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-TG-RAW",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
 
@@ -1080,7 +1115,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "telegram",
-        sessionKey: "tg:group:-100123:thread:2",
+        sessionKey: "agent:main:telegram:group:-100123:topic:2",
         raw: {
           telegram: {
             method: "sendMessage",
@@ -1146,7 +1181,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-TG-RAW-EDIT",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
 
@@ -1158,7 +1193,7 @@ describe("mux server", () => {
       },
       body: JSON.stringify({
         channel: "telegram",
-        sessionKey: "tg:group:-100123:thread:2",
+        sessionKey: "agent:main:telegram:group:-100123:topic:2",
         raw: {
           telegram: {
             method: "editMessageText",
@@ -1218,7 +1253,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-TG-TYPING",
-      sessionKey: "tg:group:-100123:thread:2",
+      sessionKey: "agent:main:telegram:group:-100123:topic:2",
     });
     expect(claim.status).toBe(200);
 
@@ -1232,7 +1267,7 @@ describe("mux server", () => {
         op: "action",
         action: "typing",
         channel: "telegram",
-        sessionKey: "tg:group:-100123:thread:2",
+        sessionKey: "agent:main:telegram:group:-100123:topic:2",
       }),
     });
 
@@ -1798,7 +1833,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-IN-1",
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
     });
     expect(claim.status).toBe(200);
     releaseUpdates = true;
@@ -1814,7 +1849,7 @@ describe("mux server", () => {
     expect(inboundRequests[0]?.payload).toMatchObject({
       eventId: "tg:461",
       channel: "telegram",
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
       body: "  hello from mux inbound  ",
       from: "telegram:1234",
       to: "telegram:-100555",
@@ -1924,7 +1959,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-CB-TG-1",
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
     });
     expect(claim.status).toBe(200);
     releaseUpdates = true;
@@ -1946,7 +1981,7 @@ describe("mux server", () => {
           id: "cbq-1",
         },
       },
-      sessionKey: "tg:group:-100555",
+      sessionKey: "agent:main:telegram:group:-100555",
       body: "commands_page_2:main",
       from: "telegram:1234",
       to: "telegram:-100555",
@@ -2046,7 +2081,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-IN-RETRY-TG-1",
-      sessionKey: "tg:group:-100556",
+      sessionKey: "agent:main:telegram:group:-100556",
     });
     expect(claim.status).toBe(200);
     releaseUpdates = true;
@@ -2170,7 +2205,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-IN-MEDIA-1",
-      sessionKey: "tg:chat:999",
+      sessionKey: "agent:main:telegram:direct:999",
     });
     expect(claim.status).toBe(200);
 
@@ -2184,7 +2219,7 @@ describe("mux server", () => {
     expect(inboundRequests).toHaveLength(1);
     const payload = inboundRequests[0];
     expect(payload.channel).toBe("telegram");
-    expect(payload.sessionKey).toBe("tg:chat:999");
+    expect(payload.sessionKey).toBe("agent:main:telegram:direct:999");
     expect(payload.body).toBe("");
     expect(payload.messageId).toBe("9001");
 
@@ -2585,7 +2620,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "telegram",
-      sessionKey: "tg:group:-100777:thread:2",
+      sessionKey: "agent:main:telegram:group:-100777:topic:2",
       ttlSec: 120,
     });
     expect(tokenResponse.status).toBe(200);
@@ -2650,7 +2685,7 @@ describe("mux server", () => {
     expect(inboundRequests).toHaveLength(1);
     expect(inboundRequests[0]).toMatchObject({
       channel: "telegram",
-      sessionKey: "tg:group:-100777:thread:2",
+      sessionKey: "agent:main:telegram:group:-100777:topic:2",
       body: "/help",
       messageId: "8002",
       threadId: 2,
@@ -2693,6 +2728,387 @@ describe("mux server", () => {
     });
   });
 
+  test("pairs telegram DM threads once and isolates sessions per thread", async () => {
+    const inboundRequests: Array<Record<string, unknown>> = [];
+    const inbound = await startHttpServer(async (req, res) => {
+      if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      inboundRequests.push(await readJsonBody(req));
+      res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    const pendingUpdates: Array<Record<string, unknown>> = [];
+    const sentMessages: Array<Record<string, unknown>> = [];
+    const telegramApi = await startHttpServer(async (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      if (req.url === "/botdummy-token/getUpdates") {
+        const body = await readJsonBody(req);
+        const offset = typeof body.offset === "number" ? Number(body.offset) : 0;
+        const deliverable = pendingUpdates
+          .map((entry) => {
+            const updateId = Number(entry.update_id ?? 0);
+            return { entry, updateId };
+          })
+          .filter((entry) => Number.isFinite(entry.updateId) && entry.updateId >= offset)
+          .toSorted((a, b) => a.updateId - b.updateId);
+        const result = deliverable.map((entry) => entry.entry);
+        if (deliverable.length > 0) {
+          const maxDelivered = deliverable[deliverable.length - 1]?.updateId ?? 0;
+          for (let i = pendingUpdates.length - 1; i >= 0; i -= 1) {
+            const updateId = Number(pendingUpdates[i]?.update_id ?? 0);
+            if (Number.isFinite(updateId) && updateId <= maxDelivered) {
+              pendingUpdates.splice(i, 1);
+            }
+          }
+        }
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: true, result }));
+        return;
+      }
+      if (req.url === "/botdummy-token/sendMessage") {
+        sentMessages.push(await readJsonBody(req));
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            result: {
+              message_id: 902,
+              chat: { id: 999, type: "private" },
+            },
+          }),
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const server = await startServer({
+      tenantsJson: JSON.stringify([
+        {
+          id: "tenant-a",
+          name: "Tenant A",
+          apiKey: "tenant-a-key",
+          inboundUrl: `${inbound.url}/v1/mux/inbound`,
+          inboundTimeoutMs: 2_000,
+        },
+      ]),
+      extraEnv: {
+        MUX_TELEGRAM_API_BASE_URL: telegramApi.url,
+        MUX_TELEGRAM_POLL_TIMEOUT_SEC: "1",
+        MUX_TELEGRAM_POLL_RETRY_MS: "50",
+        MUX_TELEGRAM_BOOTSTRAP_LATEST: "false",
+      },
+    });
+
+    const tokenResponse = await createPairingToken({
+      port: server.port,
+      apiKey: "tenant-a-key",
+      channel: "telegram",
+      ttlSec: 120,
+    });
+    expect(tokenResponse.status).toBe(200);
+    const tokenBody = (await tokenResponse.json()) as {
+      token: string;
+    };
+    expect(tokenBody.token.startsWith("mpt_")).toBe(true);
+
+    pendingUpdates.push(
+      {
+        update_id: 4101,
+        message: {
+          message_id: 9101,
+          text: `/start ${tokenBody.token}`,
+          date: 1_700_000_100,
+          from: { id: 1234 },
+          chat: { id: 999, type: "private" },
+          message_thread_id: 2,
+        },
+      },
+      {
+        update_id: 4102,
+        message: {
+          message_id: 9102,
+          text: "hello thread two",
+          date: 1_700_000_101,
+          from: { id: 1234 },
+          chat: { id: 999, type: "private" },
+          message_thread_id: 2,
+        },
+      },
+      {
+        update_id: 4103,
+        message: {
+          message_id: 9103,
+          text: "hello thread three",
+          date: 1_700_000_102,
+          from: { id: 1234 },
+          chat: { id: 999, type: "private" },
+          message_thread_id: 3,
+        },
+      },
+    );
+
+    await waitForCondition(
+      () => inboundRequests.length >= 2,
+      5_000,
+      "timed out waiting for thread-scoped inbound forwards",
+    );
+
+    expect(inboundRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "telegram",
+          sessionKey: "agent:main:telegram:direct:999:thread:2",
+          body: "hello thread two",
+          threadId: 2,
+          channelData: expect.objectContaining({
+            routeKey: "telegram:default:chat:999:topic:2",
+          }),
+        }),
+        expect.objectContaining({
+          channel: "telegram",
+          sessionKey: "agent:main:telegram:direct:999:thread:3",
+          body: "hello thread three",
+          threadId: 3,
+          channelData: expect.objectContaining({
+            routeKey: "telegram:default:chat:999:topic:3",
+          }),
+        }),
+      ]),
+    );
+
+    const pairings = await listPairings({ port: server.port, apiKey: "tenant-a-key" });
+    expect(pairings.status).toBe(200);
+    expect(await pairings.json()).toEqual({
+      items: [
+        {
+          bindingId: expect.stringContaining("bind_"),
+          channel: "telegram",
+          scope: "chat",
+          routeKey: "telegram:default:chat:999",
+        },
+      ],
+    });
+
+    const outbound = await fetch(`http://127.0.0.1:${server.port}/v1/mux/outbound/send`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer tenant-a-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channel: "telegram",
+        sessionKey: "agent:main:telegram:direct:999:thread:3",
+        raw: {
+          telegram: {
+            method: "sendMessage",
+            body: {
+              text: "reply thread 3",
+            },
+          },
+        },
+      }),
+    });
+    expect(outbound.status).toBe(200);
+    expect(await outbound.json()).toMatchObject({
+      ok: true,
+      messageId: "902",
+      rawPassthrough: true,
+    });
+
+    const threadReply = sentMessages.find(
+      (message) => toSafeString(message.text) === "reply thread 3",
+    );
+    expect(threadReply).toBeDefined();
+    expect(toSafeString(threadReply?.chat_id)).toBe("999");
+    expect(threadReply?.message_thread_id).toBe(3);
+  });
+
+  test("maps forum general topic to thread 1 and omits message_thread_id on sendMessage", async () => {
+    const inboundRequests: Array<Record<string, unknown>> = [];
+    const inbound = await startHttpServer(async (req, res) => {
+      if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      inboundRequests.push(await readJsonBody(req));
+      res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    const telegramRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    let releaseUpdates = false;
+    let hasSentUpdate = false;
+    const telegramApi = await startHttpServer(async (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const body = await readJsonBody(req);
+      if (!req.url) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      telegramRequests.push({ path: req.url, body });
+      if (req.url === "/botdummy-token/getUpdates") {
+        const hasOffset = typeof body.offset === "number";
+        const shouldSend = hasOffset && releaseUpdates && !hasSentUpdate;
+        if (shouldSend) {
+          hasSentUpdate = true;
+        }
+        const result = shouldSend
+          ? [
+              {
+                update_id: 7001,
+                message: {
+                  message_id: 7002,
+                  date: 1_700_000_300,
+                  text: "hello from forum general",
+                  from: { id: 1234 },
+                  chat: { id: -100909, type: "supergroup", is_forum: true },
+                },
+              },
+            ]
+          : [];
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: true, result }));
+        return;
+      }
+      if (
+        req.url === "/botdummy-token/sendMessage" ||
+        req.url === "/botdummy-token/sendChatAction"
+      ) {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            result: { message_id: 9911, chat: { id: -100909 } },
+          }),
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const server = await startServer({
+      tenantsJson: JSON.stringify([
+        {
+          id: "tenant-a",
+          name: "Tenant A",
+          apiKey: "tenant-a-key",
+          inboundUrl: `${inbound.url}/v1/mux/inbound`,
+          inboundTimeoutMs: 2_000,
+        },
+      ]),
+      pairingCodesJson: JSON.stringify([
+        {
+          code: "PAIR-FORUM-GEN-1",
+          channel: "telegram",
+          routeKey: "telegram:default:chat:-100909",
+          scope: "chat",
+        },
+      ]),
+      extraEnv: {
+        MUX_TELEGRAM_API_BASE_URL: telegramApi.url,
+        MUX_TELEGRAM_POLL_TIMEOUT_SEC: "1",
+        MUX_TELEGRAM_POLL_RETRY_MS: "50",
+        MUX_TELEGRAM_BOOTSTRAP_LATEST: "false",
+      },
+    });
+
+    const claim = await claimPairing({
+      port: server.port,
+      apiKey: "tenant-a-key",
+      code: "PAIR-FORUM-GEN-1",
+    });
+    expect(claim.status).toBe(200);
+    releaseUpdates = true;
+
+    await waitForCondition(
+      () => inboundRequests.length > 0,
+      5_000,
+      "timed out waiting for forum general inbound forward",
+    );
+
+    expect(inboundRequests[0]).toMatchObject({
+      channel: "telegram",
+      sessionKey: "agent:main:telegram:group:-100909:topic:1",
+      threadId: 1,
+      channelData: {
+        chatId: "-100909",
+        topicId: 1,
+        routeKey: "telegram:default:chat:-100909:topic:1",
+      },
+    });
+
+    const outbound = await fetch(`http://127.0.0.1:${server.port}/v1/mux/outbound/send`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer tenant-a-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channel: "telegram",
+        sessionKey: "agent:main:telegram:group:-100909:topic:1",
+        raw: {
+          telegram: {
+            method: "sendMessage",
+            body: {
+              text: "forum general reply",
+              message_thread_id: 1,
+            },
+          },
+        },
+      }),
+    });
+    expect(outbound.status).toBe(200);
+
+    const sendMessageRequest = telegramRequests.find(
+      (request) =>
+        request.path === "/botdummy-token/sendMessage" &&
+        toSafeString(request.body.text) === "forum general reply",
+    );
+    expect(sendMessageRequest).toBeDefined();
+    expect(toSafeString(sendMessageRequest?.body.chat_id)).toBe("-100909");
+    expect(sendMessageRequest?.body.message_thread_id).toBeUndefined();
+
+    const typing = await fetch(`http://127.0.0.1:${server.port}/v1/mux/outbound/send`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer tenant-a-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channel: "telegram",
+        sessionKey: "agent:main:telegram:group:-100909:topic:1",
+        op: "action",
+        action: "typing",
+      }),
+    });
+    expect(typing.status).toBe(200);
+
+    const typingRequest = telegramRequests.find(
+      (request) => request.path === "/botdummy-token/sendChatAction",
+    );
+    expect(typingRequest).toBeDefined();
+    expect(toSafeString(typingRequest?.body.chat_id)).toBe("-100909");
+    expect(toSafeString(typingRequest?.body.action)).toBe("typing");
+    expect(typingRequest?.body.message_thread_id).toBe(1);
+  });
+
   test("pairs from dashboard token sent in discord DM and forwards later message", async () => {
     const inboundRequests: Array<Record<string, unknown>> = [];
     const inbound = await startHttpServer(async (req, res) => {
@@ -2708,65 +3124,139 @@ describe("mux server", () => {
 
     const dmChannelId = "777001";
     const dmUserId = "4242";
-    const pendingMessages: Array<Record<string, unknown>> = [];
-    const sentMessages: Array<Record<string, unknown>> = [];
+    const pairingNotices: Array<Record<string, unknown>> = [];
+    const gatewayState: {
+      socket: WebSocket | null;
+      identified: boolean;
+      dispatched: boolean;
+      pairingToken: string | null;
+    } = {
+      socket: null,
+      identified: false,
+      dispatched: false,
+      pairingToken: null,
+    };
+
+    const dispatchGatewayMessages = () => {
+      if (
+        !gatewayState.socket ||
+        !gatewayState.identified ||
+        !gatewayState.pairingToken ||
+        gatewayState.dispatched
+      ) {
+        return;
+      }
+      gatewayState.dispatched = true;
+      const socket = gatewayState.socket;
+      const author = {
+        id: dmUserId,
+        bot: false,
+        username: "tester",
+      };
+      const buildMessage = (id: string, content: string, timestamp: string) => ({
+        id,
+        channel_id: dmChannelId,
+        type: 0,
+        content,
+        author,
+        attachments: [],
+        mentions: [],
+        mention_roles: [],
+        timestamp,
+      });
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 2,
+            d: buildMessage("1001", "hello before pairing", "2026-01-01T00:00:01.000Z"),
+          }),
+        );
+      }, 40);
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 3,
+            d: buildMessage("1002", "mpt_abcdefghijklmnopqrstuvwxyz", "2026-01-01T00:00:02.000Z"),
+          }),
+        );
+      }, 120);
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 4,
+            d: buildMessage("1003", gatewayState.pairingToken ?? "", "2026-01-01T00:00:03.000Z"),
+          }),
+        );
+      }, 200);
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 5,
+            d: buildMessage("1004", "hello after pair", "2026-01-01T00:00:04.000Z"),
+          }),
+        );
+      }, 280);
+    };
+
+    const gateway = await startWsServer((socket) => {
+      gatewayState.socket = socket;
+      socket.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }));
+      socket.on("message", (raw) => {
+        const payloadText =
+          typeof raw === "string"
+            ? raw
+            : Buffer.isBuffer(raw)
+              ? raw.toString("utf8")
+              : Array.isArray(raw)
+                ? Buffer.concat(raw).toString("utf8")
+                : Buffer.from(raw).toString("utf8");
+        const frame = JSON.parse(payloadText) as { op?: unknown };
+        if (Number(frame.op) !== 2) {
+          return;
+        }
+        gatewayState.identified = true;
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "READY",
+            s: 1,
+            d: { session_id: "gateway-session-dm-test" },
+          }),
+        );
+        dispatchGatewayMessages();
+      });
+      socket.on("close", () => {
+        gatewayState.socket = null;
+        gatewayState.identified = false;
+      });
+    });
 
     const discordApi = await startHttpServer(async (req, res) => {
       const method = req.method ?? "GET";
       const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
 
-      if (method === "POST" && requestUrl.pathname === "/users/@me/channels") {
-        const body = await readJsonBody(req);
-        if (toSafeString(body.recipient_id) !== dmUserId) {
-          res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ error: "unexpected recipient" }));
-          return;
-        }
+      if (method === "GET" && requestUrl.pathname === "/gateway/bot") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ id: dmChannelId, type: 1 }));
+        res.end(JSON.stringify({ url: gateway.url }));
         return;
       }
 
-      if (method === "GET" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
-        const afterRaw = requestUrl.searchParams.get("after");
-        const limitRaw = requestUrl.searchParams.get("limit");
-        const after = afterRaw ? BigInt(afterRaw) : 0n;
-        const limit = Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 50;
-        const deliverable = pendingMessages
-          .filter((entry) => {
-            const id = toSafeString(entry.id, "0");
-            if (!/^\d+$/.test(id)) {
-              return false;
-            }
-            return BigInt(id) > after;
-          })
-          .toSorted((a, b) => {
-            const aId = BigInt(toSafeString(a.id, "0"));
-            const bId = BigInt(toSafeString(b.id, "0"));
-            return aId < bId ? -1 : aId > bId ? 1 : 0;
-          })
-          .slice(0, Math.max(1, Math.min(100, limit)));
-        if (deliverable.length > 0) {
-          const maxDelivered = BigInt(toSafeString(deliverable[deliverable.length - 1]?.id, "0"));
-          for (let i = pendingMessages.length - 1; i >= 0; i -= 1) {
-            const id = toSafeString(pendingMessages[i]?.id, "0");
-            if (/^\d+$/.test(id) && BigInt(id) <= maxDelivered) {
-              pendingMessages.splice(i, 1);
-            }
-          }
-        }
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(deliverable));
-        return;
-      }
-
-      if (method === "POST" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
-        sentMessages.push(await readJsonBody(req));
+      const channelMessagesMatch = requestUrl.pathname.match(/^\/channels\/(\d+)\/messages$/);
+      if (method === "POST" && channelMessagesMatch) {
+        pairingNotices.push(await readJsonBody(req));
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(
           JSON.stringify({
-            id: String(9000 + sentMessages.length),
-            channel_id: dmChannelId,
+            id: String(9000 + pairingNotices.length),
+            channel_id: channelMessagesMatch[1],
           }),
         );
         return;
@@ -2799,8 +3289,6 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "discord",
-      routeKey: "discord:default:dm:user:4242",
-      sessionKey: "dc:dm:4242",
       ttlSec: 120,
     });
     expect(tokenResponse.status).toBe(200);
@@ -2813,58 +3301,11 @@ describe("mux server", () => {
     expect(tokenBody.deepLink ?? null).toBeNull();
     expect(tokenBody.startCommand ?? null).toBeNull();
 
-    const baseAuthor = {
-      id: dmUserId,
-      bot: false,
-      username: "tester",
-    };
-    pendingMessages.push({
-      id: "1001",
-      channel_id: dmChannelId,
-      type: 0,
-      content: "hello before pairing",
-      author: baseAuthor,
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:01.000Z",
-    });
-    pendingMessages.push({
-      id: "1002",
-      channel_id: dmChannelId,
-      type: 0,
-      content: "mpt_abcdefghijklmnopqrstuvwxyz",
-      author: baseAuthor,
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:02.000Z",
-    });
-    pendingMessages.push({
-      id: "1003",
-      channel_id: dmChannelId,
-      type: 0,
-      content: tokenBody.token,
-      author: baseAuthor,
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:03.000Z",
-    });
-    pendingMessages.push({
-      id: "1004",
-      channel_id: dmChannelId,
-      type: 0,
-      content: "hello after pair",
-      author: baseAuthor,
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:04.000Z",
-    });
+    gatewayState.pairingToken = tokenBody.token;
+    dispatchGatewayMessages();
 
     await waitForCondition(
-      () => inboundRequests.length >= 1 && sentMessages.length >= 3,
+      () => inboundRequests.length >= 1 && pairingNotices.length >= 3,
       12_000,
       "timed out waiting for discord post-pair inbound forward and notices",
     );
@@ -2872,7 +3313,7 @@ describe("mux server", () => {
     expect(inboundRequests).toHaveLength(1);
     expect(inboundRequests[0]).toMatchObject({
       channel: "discord",
-      sessionKey: "dc:dm:4242",
+      sessionKey: "agent:main:discord:direct:4242",
       body: "hello after pair",
       messageId: "1004",
       from: "discord:4242",
@@ -2885,14 +3326,14 @@ describe("mux server", () => {
     });
 
     expect(
-      sentMessages.some((message) =>
+      pairingNotices.some((message) =>
         toSafeString(message.content).includes("This chat is not paired"),
       ),
     ).toBe(true);
     expect(
-      sentMessages.some((message) => toSafeString(message.content).includes("Invalid token")),
+      pairingNotices.some((message) => toSafeString(message.content).includes("Invalid token")),
     ).toBe(true);
-    expect(sentMessages.some((message) => toSafeString(message.content).includes("Paired"))).toBe(
+    expect(pairingNotices.some((message) => toSafeString(message.content).includes("Paired"))).toBe(
       true,
     );
 
@@ -2909,6 +3350,293 @@ describe("mux server", () => {
       ],
     });
   }, 15_000);
+
+  test("maps discord guild threads to thread-scoped sessions from route-less pairing", async () => {
+    const inboundRequests: Array<Record<string, unknown>> = [];
+    const inbound = await startHttpServer(async (req, res) => {
+      if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      inboundRequests.push(await readJsonBody(req));
+      res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    const guildId = "9001";
+    const guildChannelId = "12345";
+    const threadAId = "777101";
+    const threadBId = "777102";
+    const guildUserId = "4242";
+    const pairingNotices: Array<Record<string, unknown>> = [];
+
+    const gatewayState: {
+      socket: WebSocket | null;
+      identified: boolean;
+      dispatched: boolean;
+      pairingToken: string | null;
+    } = {
+      socket: null,
+      identified: false,
+      dispatched: false,
+      pairingToken: null,
+    };
+
+    const dispatchGatewayMessages = () => {
+      if (
+        !gatewayState.socket ||
+        !gatewayState.identified ||
+        !gatewayState.pairingToken ||
+        gatewayState.dispatched
+      ) {
+        return;
+      }
+      gatewayState.dispatched = true;
+      const socket = gatewayState.socket;
+      const author = {
+        id: guildUserId,
+        bot: false,
+        username: "guild-user",
+      };
+      const buildMessage = (
+        id: string,
+        channelId: string,
+        content: string,
+        isoTimestamp: string,
+      ) => ({
+        id,
+        channel_id: channelId,
+        guild_id: guildId,
+        type: 0,
+        content,
+        author,
+        thread: {
+          id: channelId,
+          parent_id: guildChannelId,
+        },
+        attachments: [],
+        mentions: [],
+        mention_roles: [],
+        timestamp: isoTimestamp,
+      });
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 2,
+            d: buildMessage(
+              "2001",
+              threadAId,
+              gatewayState.pairingToken ?? "",
+              "2026-01-01T00:01:01.000Z",
+            ),
+          }),
+        );
+      }, 40);
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 3,
+            d: buildMessage("2002", threadAId, "hello guild thread a", "2026-01-01T00:01:02.000Z"),
+          }),
+        );
+      }, 180);
+      setTimeout(() => {
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "MESSAGE_CREATE",
+            s: 4,
+            d: buildMessage("2003", threadBId, "hello guild thread b", "2026-01-01T00:01:03.000Z"),
+          }),
+        );
+      }, 320);
+    };
+
+    const gateway = await startWsServer((socket) => {
+      gatewayState.socket = socket;
+      socket.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }));
+      socket.on("message", (raw) => {
+        const payloadText =
+          typeof raw === "string"
+            ? raw
+            : Buffer.isBuffer(raw)
+              ? raw.toString("utf8")
+              : Array.isArray(raw)
+                ? Buffer.concat(raw).toString("utf8")
+                : Buffer.from(raw).toString("utf8");
+        const frame = JSON.parse(payloadText) as { op?: unknown };
+        if (Number(frame.op) !== 2) {
+          return;
+        }
+        gatewayState.identified = true;
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "READY",
+            s: 1,
+            d: { session_id: "gateway-session-test" },
+          }),
+        );
+        dispatchGatewayMessages();
+      });
+      socket.on("close", () => {
+        gatewayState.socket = null;
+        gatewayState.identified = false;
+      });
+    });
+
+    const discordApi = await startHttpServer(async (req, res) => {
+      const method = req.method ?? "GET";
+      const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+
+      if (method === "GET" && requestUrl.pathname === "/gateway/bot") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ url: gateway.url }));
+        return;
+      }
+
+      const channelMessagesMatch = requestUrl.pathname.match(/^\/channels\/(\d+)\/messages$/);
+      if (channelMessagesMatch) {
+        if (method === "GET") {
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify([]));
+          return;
+        }
+        if (method === "POST") {
+          pairingNotices.push(await readJsonBody(req));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              id: String(10_000 + pairingNotices.length),
+              channel_id: channelMessagesMatch[1],
+            }),
+          );
+          return;
+        }
+      }
+
+      const channelMatch = requestUrl.pathname.match(/^\/channels\/(\d+)$/);
+      if (method === "GET" && channelMatch) {
+        const channelId = channelMatch[1];
+        if (channelId === threadAId || channelId === threadBId) {
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              id: channelId,
+              guild_id: guildId,
+              parent_id: guildChannelId,
+              type: 11,
+            }),
+          );
+          return;
+        }
+        if (channelId === guildChannelId) {
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              id: channelId,
+              guild_id: guildId,
+              type: 0,
+            }),
+          );
+          return;
+        }
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    const server = await startServer({
+      tenantsJson: JSON.stringify([
+        {
+          id: "tenant-a",
+          name: "Tenant A",
+          apiKey: "tenant-a-key",
+          inboundUrl: `${inbound.url}/v1/mux/inbound`,
+          inboundTimeoutMs: 2_000,
+        },
+      ]),
+      extraEnv: {
+        MUX_DISCORD_API_BASE_URL: discordApi.url,
+        MUX_DISCORD_POLL_INTERVAL_MS: "50",
+        MUX_DISCORD_BOOTSTRAP_LATEST: "false",
+        MUX_DISCORD_GATEWAY_DM_ENABLED: "false",
+        MUX_DISCORD_GATEWAY_GUILD_ENABLED: "true",
+      },
+    });
+
+    const tokenResponse = await createPairingToken({
+      port: server.port,
+      apiKey: "tenant-a-key",
+      channel: "discord",
+      sessionKey: `agent:main:discord:channel:${guildChannelId}`,
+      ttlSec: 120,
+    });
+    expect(tokenResponse.status).toBe(200);
+    const tokenBody = (await tokenResponse.json()) as {
+      token: string;
+    };
+    gatewayState.pairingToken = tokenBody.token;
+    dispatchGatewayMessages();
+
+    await waitForCondition(
+      () => inboundRequests.length >= 2,
+      20_000,
+      "timed out waiting for discord guild thread inbound forwards",
+    );
+
+    expect(inboundRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: "discord",
+          sessionKey: `agent:main:discord:channel:${threadAId}`,
+          body: "hello guild thread a",
+          threadId: threadAId,
+          chatType: "group",
+          channelData: expect.objectContaining({
+            channelId: threadAId,
+            guildId,
+            routeKey: `discord:default:guild:${guildId}:channel:${guildChannelId}:thread:${threadAId}`,
+          }),
+        }),
+        expect.objectContaining({
+          channel: "discord",
+          sessionKey: `agent:main:discord:channel:${threadBId}`,
+          body: "hello guild thread b",
+          threadId: threadBId,
+          chatType: "group",
+          channelData: expect.objectContaining({
+            channelId: threadBId,
+            guildId,
+            routeKey: `discord:default:guild:${guildId}:channel:${guildChannelId}:thread:${threadBId}`,
+          }),
+        }),
+      ]),
+    );
+
+    expect(pairingNotices.some((notice) => toSafeString(notice.content).includes("Paired"))).toBe(
+      true,
+    );
+
+    const pairings = await listPairings({ port: server.port, apiKey: "tenant-a-key" });
+    expect(pairings.status).toBe(200);
+    expect(await pairings.json()).toEqual({
+      items: [
+        {
+          bindingId: expect.stringContaining("bind_"),
+          channel: "discord",
+          scope: "channel",
+          routeKey: `discord:default:guild:${guildId}:channel:${guildChannelId}`,
+        },
+      ],
+    });
+  }, 20_000);
 
   test("telegram bot control commands support help, status, unpair, and switch", async () => {
     const inboundRequests: Array<Record<string, unknown>> = [];
@@ -3010,7 +3738,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       code: "PAIR-TG-BOT-CTRL",
-      sessionKey: "tg:group:-100888",
+      sessionKey: "agent:main:telegram:group:-100888",
     });
     expect(initialClaim.status).toBe(200);
 
@@ -3018,7 +3746,7 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-b-key",
       channel: "telegram",
-      sessionKey: "tg:group:-100888:switch",
+      sessionKey: "agent:main:telegram:group:-100888:switch",
       ttlSec: 120,
     });
     expect(switchTokenResponse.status).toBe(200);
@@ -3099,7 +3827,7 @@ describe("mux server", () => {
     expect(inboundRequests).toHaveLength(1);
     expect(inboundRequests[0]).toMatchObject({
       channel: "telegram",
-      sessionKey: "tg:group:-100888:switch",
+      sessionKey: "agent:main:telegram:group:-100888:switch",
       body: "/help",
       channelData: {
         routeKey: "telegram:default:chat:-100888",
@@ -3241,7 +3969,6 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-b-key",
       channel: "discord",
-      routeKey: "discord:default:dm:user:4242",
       sessionKey: "dc:dm:4242:switch",
       ttlSec: 120,
     });
@@ -3364,61 +4091,102 @@ describe("mux server", () => {
     const dmChannelId = "997001";
     const dmUserId = "9090";
     const sentMessages: Array<Record<string, unknown>> = [];
-    const discordMessages: Array<Record<string, unknown>> = [
-      {
-        id: "1001",
-        channel_id: dmChannelId,
-        type: 0,
-        content: "mpt_invalid_token_value_abcdefghijklmnopqrstuvwxyz",
-        author: {
-          id: dmUserId,
-          bot: false,
-          username: "tester",
-        },
-        attachments: [],
-        mentions: [],
-        mention_roles: [],
-        timestamp: "2026-01-01T00:00:01.000Z",
-      },
-    ];
+    const gatewayState: {
+      socket: WebSocket | null;
+      identified: boolean;
+      allowDispatch: boolean;
+      dispatched: boolean;
+    } = {
+      socket: null,
+      identified: false,
+      allowDispatch: false,
+      dispatched: false,
+    };
+
+    const dispatchInvalidTokenMessage = () => {
+      if (
+        !gatewayState.socket ||
+        !gatewayState.identified ||
+        !gatewayState.allowDispatch ||
+        gatewayState.dispatched
+      ) {
+        return;
+      }
+      gatewayState.dispatched = true;
+      gatewayState.socket.send(
+        JSON.stringify({
+          op: 0,
+          t: "MESSAGE_CREATE",
+          s: 2,
+          d: {
+            id: "1001",
+            channel_id: dmChannelId,
+            type: 0,
+            content: "mpt_invalid_token_value_abcdefghijklmnopqrstuvwxyz",
+            author: {
+              id: dmUserId,
+              bot: false,
+              username: "tester",
+            },
+            attachments: [],
+            mentions: [],
+            mention_roles: [],
+            timestamp: "2026-01-01T00:00:01.000Z",
+          },
+        }),
+      );
+    };
+
+    const gateway = await startWsServer((socket) => {
+      gatewayState.socket = socket;
+      socket.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }));
+      socket.on("message", (raw) => {
+        const payloadText =
+          typeof raw === "string"
+            ? raw
+            : Buffer.isBuffer(raw)
+              ? raw.toString("utf8")
+              : Array.isArray(raw)
+                ? Buffer.concat(raw).toString("utf8")
+                : Buffer.from(raw).toString("utf8");
+        const frame = JSON.parse(payloadText) as { op?: unknown };
+        if (Number(frame.op) !== 2) {
+          return;
+        }
+        gatewayState.identified = true;
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "READY",
+            s: 1,
+            d: { session_id: "gateway-session-invalid-token" },
+          }),
+        );
+        dispatchInvalidTokenMessage();
+      });
+      socket.on("close", () => {
+        gatewayState.socket = null;
+        gatewayState.identified = false;
+      });
+    });
 
     const discordApi = await startHttpServer(async (req, res) => {
       const method = req.method ?? "GET";
       const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (method === "POST" && requestUrl.pathname === "/users/@me/channels") {
-        const body = await readJsonBody(req);
-        if (toSafeString(body.recipient_id) !== dmUserId) {
-          res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ error: "unexpected recipient" }));
-          return;
-        }
+      if (method === "GET" && requestUrl.pathname === "/gateway/bot") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ id: dmChannelId, type: 1 }));
+        res.end(JSON.stringify({ url: gateway.url }));
         return;
       }
 
-      if (method === "GET" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
-        const afterRaw = requestUrl.searchParams.get("after");
-        const after = afterRaw ? BigInt(afterRaw) : 0n;
-        const deliverable = discordMessages.filter((entry) => {
-          const id = toSafeString(entry.id, "0");
-          if (!/^\d+$/.test(id)) {
-            return false;
-          }
-          return BigInt(id) > after;
-        });
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(deliverable));
-        return;
-      }
-
-      if (method === "POST" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
+      const channelMessagesMatch = requestUrl.pathname.match(/^\/channels\/(\d+)\/messages$/);
+      if (method === "POST" && channelMessagesMatch) {
         sentMessages.push(await readJsonBody(req));
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(
           JSON.stringify({
             id: String(9000 + sentMessages.length),
-            channel_id: dmChannelId,
+            channel_id: channelMessagesMatch[1],
           }),
         );
         return;
@@ -3442,11 +4210,17 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "discord",
-      routeKey: "discord:default:dm:user:9090",
       sessionKey: "dc:dm:9090",
       ttlSec: 120,
     });
     expect(tokenResponse.status).toBe(200);
+    await waitForCondition(
+      () => gatewayState.identified,
+      5_000,
+      "timed out waiting for discord gateway identify",
+    );
+    gatewayState.allowDispatch = true;
+    dispatchInvalidTokenMessage();
 
     await waitForCondition(
       () => sentMessages.some((message) => toSafeString(message.content).includes("Invalid token")),
@@ -3458,7 +4232,7 @@ describe("mux server", () => {
     expect(sentMessages.length).toBe(noticeCountAtFirstAck);
   }, 15_000);
 
-  test("releases stale discord pending route lock after token expiry", async () => {
+  test("allows multiple discord pairing tokens without route pre-locking", async () => {
     const server = await startServer({
       tenantsJson: JSON.stringify([
         { id: "tenant-a", name: "Tenant A", apiKey: "tenant-a-key" },
@@ -3470,19 +4244,20 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "discord",
-      routeKey: "discord:default:dm:user:777777",
       sessionKey: "dc:dm:777777",
-      ttlSec: 1,
+      ttlSec: 120,
     });
     expect(firstToken.status).toBe(200);
-
-    await new Promise((resolveSleep) => setTimeout(resolveSleep, 1_250));
+    expect(await firstToken.json()).toMatchObject({
+      ok: true,
+      channel: "discord",
+      token: expect.stringMatching(/^mpt_/),
+    });
 
     const secondToken = await createPairingToken({
       port: server.port,
       apiKey: "tenant-b-key",
       channel: "discord",
-      routeKey: "discord:default:dm:user:777777",
       sessionKey: "dc:dm:777777",
       ttlSec: 120,
     });
@@ -3493,50 +4268,95 @@ describe("mux server", () => {
     });
   }, 15_000);
 
-  test("does not consume discord token when first claim fails activation", async () => {
+  test("does not consume discord token when first claim attempt is invalid", async () => {
     const dmChannelId = "997001";
     const dmUserId = "9090";
-    const routeKey = `discord:default:dm:user:${dmUserId}`;
     const sentMessages: Array<Record<string, unknown>> = [];
-    const discordMessages: Array<Record<string, unknown>> = [];
+    const gatewayState: {
+      socket: WebSocket | null;
+      identified: boolean;
+    } = {
+      socket: null,
+      identified: false,
+    };
+
+    const dispatchMessage = (id: string, content: string, timestamp: string) => {
+      if (!gatewayState.socket || !gatewayState.identified) {
+        return;
+      }
+      gatewayState.socket.send(
+        JSON.stringify({
+          op: 0,
+          t: "MESSAGE_CREATE",
+          s: Number(id),
+          d: {
+            id,
+            channel_id: dmChannelId,
+            type: 0,
+            content,
+            author: {
+              id: dmUserId,
+              bot: false,
+              username: "tester",
+            },
+            attachments: [],
+            mentions: [],
+            mention_roles: [],
+            timestamp,
+          },
+        }),
+      );
+    };
+
+    const gateway = await startWsServer((socket) => {
+      gatewayState.socket = socket;
+      socket.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }));
+      socket.on("message", (raw) => {
+        const payloadText =
+          typeof raw === "string"
+            ? raw
+            : Buffer.isBuffer(raw)
+              ? raw.toString("utf8")
+              : Array.isArray(raw)
+                ? Buffer.concat(raw).toString("utf8")
+                : Buffer.from(raw).toString("utf8");
+        const frame = JSON.parse(payloadText) as { op?: unknown };
+        if (Number(frame.op) !== 2) {
+          return;
+        }
+        gatewayState.identified = true;
+        socket.send(
+          JSON.stringify({
+            op: 0,
+            t: "READY",
+            s: 1,
+            d: { session_id: "gateway-session-claim-retry" },
+          }),
+        );
+      });
+      socket.on("close", () => {
+        gatewayState.socket = null;
+        gatewayState.identified = false;
+      });
+    });
 
     const discordApi = await startHttpServer(async (req, res) => {
       const method = req.method ?? "GET";
       const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (method === "POST" && requestUrl.pathname === "/users/@me/channels") {
-        const body = await readJsonBody(req);
-        if (toSafeString(body.recipient_id) !== dmUserId) {
-          res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ error: "unexpected recipient" }));
-          return;
-        }
+      if (method === "GET" && requestUrl.pathname === "/gateway/bot") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ id: dmChannelId, type: 1 }));
+        res.end(JSON.stringify({ url: gateway.url }));
         return;
       }
 
-      if (method === "GET" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
-        const afterRaw = requestUrl.searchParams.get("after");
-        const after = afterRaw ? BigInt(afterRaw) : 0n;
-        const deliverable = discordMessages.filter((entry) => {
-          const id = toSafeString(entry.id, "0");
-          if (!/^\d+$/.test(id)) {
-            return false;
-          }
-          return BigInt(id) > after;
-        });
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(deliverable));
-        return;
-      }
-
-      if (method === "POST" && requestUrl.pathname === `/channels/${dmChannelId}/messages`) {
+      const channelMessagesMatch = requestUrl.pathname.match(/^\/channels\/(\d+)\/messages$/);
+      if (method === "POST" && channelMessagesMatch) {
         sentMessages.push(await readJsonBody(req));
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(
           JSON.stringify({
             id: String(9000 + sentMessages.length),
-            channel_id: dmChannelId,
+            channel_id: channelMessagesMatch[1],
           }),
         );
         return;
@@ -3560,31 +4380,25 @@ describe("mux server", () => {
       port: server.port,
       apiKey: "tenant-a-key",
       channel: "discord",
-      routeKey,
       sessionKey: "dc:dm:9090",
       ttlSec: 120,
     });
     expect(tokenResponse.status).toBe(200);
     const tokenBody = (await tokenResponse.json()) as { token: string };
+    await waitForCondition(
+      () => gatewayState.identified,
+      5_000,
+      "timed out waiting for discord gateway identify before token claim",
+    );
 
     const dbPath = resolve(server.tempDir, "mux-server.sqlite");
     const db = new DatabaseSync(dbPath);
     db.prepare(
-      "UPDATE pairing_tokens SET route_key = ? WHERE tenant_id = ? AND channel = 'discord' AND consumed_at_ms IS NULL",
-    ).run("discord:default:dm:user:999999", "tenant-a");
+      "UPDATE pairing_tokens SET channel = 'telegram' WHERE tenant_id = ? AND channel = 'discord' AND consumed_at_ms IS NULL",
+    ).run("tenant-a");
     db.close();
 
-    discordMessages.push({
-      id: "1001",
-      channel_id: dmChannelId,
-      type: 0,
-      content: tokenBody.token,
-      author: { id: dmUserId, bot: false, username: "tester" },
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:01.000Z",
-    });
+    dispatchMessage("1001", tokenBody.token, "2026-01-01T00:00:01.000Z");
 
     await waitForCondition(
       () => sentMessages.some((message) => toSafeString(message.content).includes("Invalid token")),
@@ -3595,22 +4409,12 @@ describe("mux server", () => {
     const dbRestore = new DatabaseSync(dbPath);
     dbRestore
       .prepare(
-        "UPDATE pairing_tokens SET route_key = ? WHERE tenant_id = ? AND channel = 'discord' AND consumed_at_ms IS NULL",
+        "UPDATE pairing_tokens SET channel = 'discord' WHERE tenant_id = ? AND channel = 'telegram' AND consumed_at_ms IS NULL",
       )
-      .run(routeKey, "tenant-a");
+      .run("tenant-a");
     dbRestore.close();
 
-    discordMessages.push({
-      id: "1002",
-      channel_id: dmChannelId,
-      type: 0,
-      content: tokenBody.token,
-      author: { id: dmUserId, bot: false, username: "tester" },
-      attachments: [],
-      mentions: [],
-      mention_roles: [],
-      timestamp: "2026-01-01T00:00:02.000Z",
-    });
+    dispatchMessage("1002", tokenBody.token, "2026-01-01T00:00:02.000Z");
 
     await waitForCondition(
       () => sentMessages.some((message) => toSafeString(message.content).includes("Paired")),
@@ -3826,5 +4630,5 @@ describe("mux server", () => {
     await stopServer(secondServer);
     removeRunningServer(secondServer);
     rmSync(tempDir, { recursive: true, force: true });
-  });
+  }, 20_000);
 });

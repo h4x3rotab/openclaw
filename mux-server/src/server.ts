@@ -69,7 +69,6 @@ type PairingTokenRow = {
   tenant_id: string;
   channel: string;
   session_key: string | null;
-  route_key: string | null;
 };
 
 type ActiveBindingRow = {
@@ -87,6 +86,12 @@ type ExistingBindingRow = {
 type SessionRouteBindingRow = {
   binding_id: string;
   route_key: string;
+  channel_context_json?: string | null;
+};
+
+type SessionRouteByBindingRow = {
+  session_key?: unknown;
+  channel_context_json?: unknown;
 };
 
 type ActiveBindingLookupRow = {
@@ -274,7 +279,7 @@ type TelegramIncomingMessage = {
   video?: TelegramVideo;
   animation?: TelegramAnimation;
   from?: { id?: number };
-  chat?: { id?: number; type?: string };
+  chat?: { id?: number; type?: string; is_forum?: boolean };
 };
 
 type TelegramPhotoSize = {
@@ -447,6 +452,7 @@ async function loadDiscordRuntimeModules(): Promise<DiscordRuntimeModules> {
 
 const host = process.env.MUX_HOST || "127.0.0.1";
 const port = Number(process.env.MUX_PORT || 18891);
+const TELEGRAM_GENERAL_TOPIC_ID = 1;
 const muxAdminToken = readNonEmptyString(process.env.MUX_ADMIN_TOKEN);
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 const discordBotToken = process.env.DISCORD_BOT_TOKEN;
@@ -483,8 +489,14 @@ const discordInboundMediaMaxBytes = Number(
 );
 const discordPendingGcEnabled = process.env.MUX_DISCORD_PENDING_GC_ENABLED === "true";
 const discordGatewayDmEnabled = process.env.MUX_DISCORD_GATEWAY_DM_ENABLED !== "false";
-const discordGatewayDmIntents = Number(
-  process.env.MUX_DISCORD_GATEWAY_DM_INTENTS || 36_864, // DirectMessages + MessageContent
+const discordGatewayGuildEnabled = process.env.MUX_DISCORD_GATEWAY_GUILD_ENABLED !== "false";
+const discordGatewayDefaultIntents = discordGatewayGuildEnabled
+  ? 37_377 // Guilds + GuildMessages + DirectMessages + MessageContent
+  : 36_864; // DirectMessages + MessageContent
+const discordGatewayIntents = Number(
+  process.env.MUX_DISCORD_GATEWAY_INTENTS ||
+    process.env.MUX_DISCORD_GATEWAY_DM_INTENTS ||
+    discordGatewayDefaultIntents,
 );
 const discordGatewayReconnectInitialMs = Number(
   process.env.MUX_DISCORD_GATEWAY_RECONNECT_INITIAL_MS || 1_000,
@@ -662,7 +674,6 @@ const stmtDeactivateStaleDiscordPendingBindings = db.prepare(`
       FROM pairing_tokens pt
       WHERE pt.tenant_id = bindings.tenant_id
         AND pt.channel = 'discord'
-        AND pt.route_key = bindings.route_key
         AND pt.consumed_at_ms IS NULL
         AND pt.expires_at_ms > ?
     )
@@ -674,18 +685,17 @@ const stmtInsertPairingToken = db.prepare(`
     tenant_id,
     channel,
     session_key,
-    route_key,
     created_at_ms,
     expires_at_ms,
     consumed_at_ms,
     consumed_binding_id,
     consumed_route_key
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+  VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
 `);
 
 const stmtSelectActivePairingTokenByHash = db.prepare(`
-  SELECT tenant_id, channel, session_key, route_key
+  SELECT tenant_id, channel, session_key
   FROM pairing_tokens
   WHERE token_hash = ? AND consumed_at_ms IS NULL AND expires_at_ms > ?
   LIMIT 1
@@ -784,7 +794,7 @@ const stmtUpsertSessionRoute = db.prepare(`
 `);
 
 const stmtResolveSessionRouteBinding = db.prepare(`
-  SELECT sr.binding_id, b.route_key
+  SELECT sr.binding_id, b.route_key, sr.channel_context_json
   FROM session_routes sr
   JOIN bindings b ON b.binding_id = sr.binding_id
   WHERE sr.tenant_id = ?
@@ -794,6 +804,13 @@ const stmtResolveSessionRouteBinding = db.prepare(`
     AND b.channel = sr.channel
     AND b.status = 'active'
   LIMIT 1
+`);
+
+const stmtListSessionRoutesByBinding = db.prepare(`
+  SELECT session_key, channel_context_json
+  FROM session_routes
+  WHERE tenant_id = ? AND channel = ? AND binding_id = ?
+  ORDER BY updated_at_ms DESC
 `);
 
 const stmtSelectSessionKeyByBinding = db.prepare(`
@@ -907,7 +924,16 @@ const stmtInsertAuditLog = db.prepare(`
 `);
 
 const idempotencyInflight = new Map<string, InflightEntry>();
-const discordChannelGuildCache = new Map<string, { guildId: string | null; expiresAtMs: number }>();
+let discordGatewayReady = false;
+const discordChannelInfoCache = new Map<
+  string,
+  {
+    guildId: string | null;
+    parentId: string | null;
+    channelType: number | null;
+    expiresAtMs: number;
+  }
+>();
 const discordChannelGuildCacheTtlMs = 30_000;
 const discordDmChannelCache = new Map<string, { channelId: string; expiresAtMs: number }>();
 const discordDmChannelCacheTtlMs = 10 * 60_000;
@@ -1175,7 +1201,6 @@ function initializeDatabase(database: DatabaseSync) {
       tenant_id TEXT NOT NULL,
       channel TEXT NOT NULL,
       session_key TEXT,
-      route_key TEXT,
       created_at_ms INTEGER NOT NULL,
       expires_at_ms INTEGER NOT NULL,
       consumed_at_ms INTEGER,
@@ -1282,8 +1307,11 @@ function ensurePairingTokenColumns(database: DatabaseSync) {
     name?: unknown;
   }>;
   const columnNames = new Set(rows.map((row) => (typeof row.name === "string" ? row.name : "")));
-  if (!columnNames.has("route_key")) {
-    database.exec("ALTER TABLE pairing_tokens ADD COLUMN route_key TEXT");
+  if (!columnNames.has("consumed_binding_id")) {
+    database.exec("ALTER TABLE pairing_tokens ADD COLUMN consumed_binding_id TEXT");
+  }
+  if (!columnNames.has("consumed_route_key")) {
+    database.exec("ALTER TABLE pairing_tokens ADD COLUMN consumed_route_key TEXT");
   }
 }
 
@@ -1662,11 +1690,19 @@ async function resolveDiscordDmChannelIdCached(userId: string): Promise<string> 
   return channelId;
 }
 
-async function resolveDiscordChannelGuildId(channelId: string): Promise<string | null> {
+async function resolveDiscordChannelInfo(channelId: string): Promise<{
+  guildId: string | null;
+  parentId: string | null;
+  channelType: number | null;
+}> {
   const now = Date.now();
-  const cached = discordChannelGuildCache.get(channelId);
+  const cached = discordChannelInfoCache.get(channelId);
   if (cached && cached.expiresAtMs > now) {
-    return cached.guildId;
+    return {
+      guildId: cached.guildId,
+      parentId: cached.parentId,
+      channelType: cached.channelType,
+    };
   }
   const { response, result } = await discordRequest({
     method: "GET",
@@ -1676,11 +1712,144 @@ async function resolveDiscordChannelGuildId(channelId: string): Promise<string |
     throw new Error(`discord channel lookup failed (${response.status})`);
   }
   const guildId = readUnsignedNumericString(result.guild_id) ?? null;
-  discordChannelGuildCache.set(channelId, {
+  const parentId = readUnsignedNumericString(result.parent_id) ?? null;
+  const channelType =
+    typeof result.type === "number" && Number.isFinite(result.type)
+      ? Math.trunc(result.type)
+      : null;
+  discordChannelInfoCache.set(channelId, {
     guildId,
+    parentId,
+    channelType,
     expiresAtMs: now + discordChannelGuildCacheTtlMs,
   });
-  return guildId;
+  return { guildId, parentId, channelType };
+}
+
+async function resolveDiscordChannelGuildId(channelId: string): Promise<string | null> {
+  const info = await resolveDiscordChannelInfo(channelId);
+  return info.guildId;
+}
+
+async function resolveDiscordIncomingRouteFromMessage(params: {
+  message: Record<string, unknown>;
+  fromId: string;
+  fallbackRoute?: DiscordBoundRoute;
+  fallbackChannelId?: string;
+}): Promise<{ route: DiscordBoundRoute; channelId: string } | null> {
+  const channelId =
+    readUnsignedNumericString(params.message.channel_id) ??
+    readUnsignedNumericString(params.fallbackChannelId);
+  if (!channelId) {
+    return null;
+  }
+  const guildId = readUnsignedNumericString(params.message.guild_id);
+  if (!guildId) {
+    return {
+      route: { kind: "dm", userId: params.fromId },
+      channelId,
+    };
+  }
+
+  if (
+    params.fallbackRoute?.kind === "guild" &&
+    params.fallbackRoute.threadId &&
+    params.fallbackRoute.threadId === channelId
+  ) {
+    return {
+      route: params.fallbackRoute,
+      channelId,
+    };
+  }
+
+  const rawThread = asRecord(params.message.thread);
+  const threadIdFromPayload = readUnsignedNumericString(rawThread?.id);
+  const threadParentIdFromPayload = readUnsignedNumericString(rawThread?.parent_id);
+  if (threadIdFromPayload && threadIdFromPayload === channelId) {
+    return {
+      route: {
+        kind: "guild",
+        guildId,
+        ...(threadParentIdFromPayload ? { channelId: threadParentIdFromPayload } : {}),
+        threadId: threadIdFromPayload,
+      },
+      channelId,
+    };
+  }
+
+  const channelInfo = await resolveDiscordChannelInfo(channelId);
+  if (channelInfo.parentId) {
+    return {
+      route: {
+        kind: "guild",
+        guildId,
+        channelId: channelInfo.parentId,
+        threadId: channelId,
+      },
+      channelId,
+    };
+  }
+
+  return {
+    route: {
+      kind: "guild",
+      guildId,
+      channelId,
+    },
+    channelId,
+  };
+}
+
+function listDiscordRouteLookupKeys(route: DiscordBoundRoute): string[] {
+  const keys: string[] = [];
+  if (route.kind === "dm") {
+    keys.push(buildDiscordDmRouteKey(route.userId));
+    return keys;
+  }
+  if (route.threadId) {
+    keys.push(
+      buildDiscordGuildRouteKey({
+        guildId: route.guildId,
+        ...(route.channelId ? { channelId: route.channelId } : {}),
+        threadId: route.threadId,
+      }),
+    );
+    keys.push(
+      buildDiscordGuildRouteKey({
+        guildId: route.guildId,
+        threadId: route.threadId,
+      }),
+    );
+  }
+  if (route.channelId) {
+    keys.push(
+      buildDiscordGuildRouteKey({
+        guildId: route.guildId,
+        channelId: route.channelId,
+      }),
+    );
+  }
+  keys.push(buildDiscordGuildRouteKey({ guildId: route.guildId }));
+  return [...new Set(keys)];
+}
+
+function resolveDiscordBindingForIncoming(
+  route: DiscordBoundRoute,
+): { tenantId: string; bindingId: string; status: "active" | "pending"; routeKey: string } | null {
+  const routeKeys = listDiscordRouteLookupKeys(route);
+  for (const routeKey of routeKeys) {
+    const row = resolveLiveBindingByRouteKey("discord", routeKey);
+    if (!row) {
+      continue;
+    }
+    return {
+      tenantId: row.tenant_id,
+      bindingId: row.binding_id,
+      status: row.status === "pending" ? "pending" : "active",
+      routeKey,
+    };
+  }
+  return null;
 }
 
 async function sendDiscordTyping(params: {
@@ -1922,7 +2091,6 @@ function issuePairingTokenForTenant(params: {
   tenant: TenantIdentity;
   channel: string;
   sessionKey?: string;
-  routeKey?: string;
   ttlSec?: number;
 }) {
   if (
@@ -1944,45 +2112,14 @@ function issuePairingTokenForTenant(params: {
   const expiresAtMs = nowMs + ttlSec * 1_000;
   const sessionKey = readNonEmptyString(params.sessionKey);
 
-  let routeKeyForAudit: string | undefined;
-  if (params.channel === "discord") {
-    const routeKey = readNonEmptyString(params.routeKey);
-    if (!routeKey) {
-      return {
-        statusCode: 400,
-        payload: { ok: false, error: "routeKey required for discord token pairing" },
-      };
-    }
-    const route = parseDiscordRouteKey(routeKey);
-    if (!route || route.kind !== "dm") {
-      return {
-        statusCode: 400,
-        payload: { ok: false, error: "discord token pairing currently supports dm routeKey only" },
-      };
-    }
-    const liveBinding = resolveLiveBindingByRouteKey("discord", routeKey);
-    if (!liveBinding) {
-      try {
-        stmtInsertPendingBinding.run(
-          `bind_${randomUUID()}`,
-          params.tenant.id,
-          "discord",
-          "dm",
-          routeKey,
-          nowMs,
-          nowMs,
-        );
-      } catch (error) {
-        if (isSqliteUniqueConstraintError(error)) {
-          return {
-            statusCode: 409,
-            payload: { ok: false, error: "route already bound" },
-          };
-        }
-        throw error;
-      }
-    }
-    routeKeyForAudit = routeKey;
+  if (params.channel === "discord" && !discordGatewayDmEnabled && !discordGatewayGuildEnabled) {
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: "discord token pairing requires gateway inbound enabled",
+      },
+    };
   }
 
   stmtInsertPairingToken.run(
@@ -1990,7 +2127,6 @@ function issuePairingTokenForTenant(params: {
     params.tenant.id,
     params.channel,
     sessionKey,
-    routeKeyForAudit ?? null,
     nowMs,
     expiresAtMs,
   );
@@ -2007,7 +2143,6 @@ function issuePairingTokenForTenant(params: {
       channel: params.channel,
       expiresAtMs,
       hasSessionKey: Boolean(sessionKey),
-      ...(routeKeyForAudit ? { routeKey: routeKeyForAudit } : {}),
     },
     nowMs,
   );
@@ -2649,6 +2784,123 @@ function parseTelegramRouteKey(routeKey: string): TelegramBoundRoute | null {
   return topicId ? { chatId, topicId } : { chatId };
 }
 
+function readRouteKeyFromSessionContext(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const record = asRecord(parsed);
+    return readNonEmptyString(record?.routeKey) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBoundRouteKeyFromSession(row: SessionRouteBindingRow): string {
+  return readRouteKeyFromSessionContext(row.channel_context_json) ?? String(row.route_key);
+}
+
+function resolveSessionKeyForBindingRoute(params: {
+  tenantId: string;
+  channel: "telegram" | "discord" | "whatsapp";
+  bindingId: string;
+  routeKey: string;
+}): string | null {
+  const rows = stmtListSessionRoutesByBinding.all(
+    params.tenantId,
+    params.channel,
+    params.bindingId,
+  ) as SessionRouteByBindingRow[];
+  for (const row of rows) {
+    const sessionKey = readNonEmptyString(row.session_key);
+    if (!sessionKey) {
+      continue;
+    }
+    const routeKey = readRouteKeyFromSessionContext(row.channel_context_json);
+    if (routeKey === params.routeKey) {
+      return sessionKey;
+    }
+  }
+  return null;
+}
+
+function resolveLatestSessionKeyForBinding(params: {
+  tenantId: string;
+  channel: "telegram" | "discord" | "whatsapp";
+  bindingId: string;
+}): string | null {
+  const row = stmtSelectSessionKeyByBinding.get(
+    params.tenantId,
+    params.channel,
+    params.bindingId,
+  ) as { session_key?: unknown } | undefined;
+  return readNonEmptyString(row?.session_key);
+}
+
+function buildThreadScopedSessionKey(
+  baseSessionKey: string,
+  chatId: string,
+  topicId: number,
+): string {
+  const normalizedBase = baseSessionKey.trim().replace(/:(thread|topic):[^:]+$/i, "");
+  return chatId.startsWith("-")
+    ? `${normalizedBase}:topic:${topicId}`
+    : `${normalizedBase}:thread:${topicId}`;
+}
+
+function resolveTelegramInboundSessionKey(params: {
+  tenantId: string;
+  bindingId: string;
+  chatId: string;
+  topicId?: number;
+}): string {
+  const incomingRouteKey = buildTelegramRouteKey(params.chatId, params.topicId);
+  const exactSessionKey = resolveSessionKeyForBindingRoute({
+    tenantId: params.tenantId,
+    channel: "telegram",
+    bindingId: params.bindingId,
+    routeKey: incomingRouteKey,
+  });
+  if (exactSessionKey) {
+    return exactSessionKey;
+  }
+
+  if (params.topicId) {
+    const chatRouteKey = buildTelegramRouteKey(params.chatId);
+    const chatSessionKey =
+      resolveSessionKeyForBindingRoute({
+        tenantId: params.tenantId,
+        channel: "telegram",
+        bindingId: params.bindingId,
+        routeKey: chatRouteKey,
+      }) ??
+      resolveLatestSessionKeyForBinding({
+        tenantId: params.tenantId,
+        channel: "telegram",
+        bindingId: params.bindingId,
+      }) ??
+      deriveTelegramSessionKey(params.chatId);
+    return buildThreadScopedSessionKey(chatSessionKey, params.chatId, params.topicId);
+  }
+
+  const chatRouteKey = buildTelegramRouteKey(params.chatId);
+  return (
+    resolveSessionKeyForBindingRoute({
+      tenantId: params.tenantId,
+      channel: "telegram",
+      bindingId: params.bindingId,
+      routeKey: chatRouteKey,
+    }) ??
+    resolveLatestSessionKeyForBinding({
+      tenantId: params.tenantId,
+      channel: "telegram",
+      bindingId: params.bindingId,
+    }) ??
+    deriveTelegramSessionKey(params.chatId)
+  );
+}
+
 function parseDiscordRouteKey(routeKey: string): DiscordBoundRoute | null {
   const dmMatch = routeKey.match(/^discord:[^:]+:dm:user:(\d+)$/);
   if (dmMatch?.[1]) {
@@ -2671,8 +2923,150 @@ function parseDiscordRouteKey(routeKey: string): DiscordBoundRoute | null {
   };
 }
 
+function buildDiscordGuildRouteKey(params: {
+  guildId: string;
+  channelId?: string;
+  threadId?: string;
+}): string {
+  const base = `discord:default:guild:${params.guildId}`;
+  if (params.channelId && params.threadId) {
+    return `${base}:channel:${params.channelId}:thread:${params.threadId}`;
+  }
+  if (params.threadId) {
+    return `${base}:thread:${params.threadId}`;
+  }
+  if (params.channelId) {
+    return `${base}:channel:${params.channelId}`;
+  }
+  return base;
+}
+
 function buildDiscordDmRouteKey(userId: string): string {
   return `discord:default:dm:user:${userId}`;
+}
+
+function buildDiscordRouteKey(route: DiscordBoundRoute): string {
+  if (route.kind === "dm") {
+    return buildDiscordDmRouteKey(route.userId);
+  }
+  return buildDiscordGuildRouteKey({
+    guildId: route.guildId,
+    ...(route.channelId ? { channelId: route.channelId } : {}),
+    ...(route.threadId ? { threadId: route.threadId } : {}),
+  });
+}
+
+function normalizeDiscordSessionAgentId(agentId: string | null | undefined): string {
+  const trimmed = readNonEmptyString(agentId);
+  return trimmed ? trimmed.toLowerCase() : "main";
+}
+
+function resolveDiscordSessionAgentIdFromKey(sessionKey: string | null | undefined): string {
+  const trimmed = readNonEmptyString(sessionKey);
+  if (!trimmed) {
+    return "main";
+  }
+  const match = trimmed.match(/^agent:([^:]+):/i);
+  return normalizeDiscordSessionAgentId(match?.[1] ?? null);
+}
+
+function buildDiscordDirectSessionKey(userId: string, agentId = "main"): string {
+  return `agent:${normalizeDiscordSessionAgentId(agentId)}:discord:direct:${userId}`;
+}
+
+function buildDiscordChannelSessionKey(channelId: string, agentId = "main"): string {
+  return `agent:${normalizeDiscordSessionAgentId(agentId)}:discord:channel:${channelId}`;
+}
+
+function buildDiscordThreadScopedSessionKey(baseSessionKey: string, threadId: string): string {
+  return buildDiscordChannelSessionKey(
+    threadId,
+    resolveDiscordSessionAgentIdFromKey(baseSessionKey),
+  );
+}
+
+function resolveDiscordBindingRouteKeyForClaim(params: {
+  incomingRoute: DiscordBoundRoute;
+}): string {
+  if (
+    params.incomingRoute.kind === "guild" &&
+    params.incomingRoute.threadId &&
+    params.incomingRoute.channelId
+  ) {
+    return buildDiscordGuildRouteKey({
+      guildId: params.incomingRoute.guildId,
+      channelId: params.incomingRoute.channelId,
+    });
+  }
+  return buildDiscordRouteKey(params.incomingRoute);
+}
+
+function resolveDiscordBindingScope(route: DiscordBoundRoute): string {
+  if (route.kind === "dm") {
+    return "dm";
+  }
+  if (route.threadId) {
+    return "thread";
+  }
+  if (route.channelId) {
+    return "channel";
+  }
+  return "guild";
+}
+
+function resolveDiscordInboundSessionKey(params: {
+  tenantId: string;
+  bindingId: string;
+  route: DiscordBoundRoute;
+  channelId: string;
+}): string {
+  const incomingRouteKey = buildDiscordRouteKey(params.route);
+  const exactSessionKey = resolveSessionKeyForBindingRoute({
+    tenantId: params.tenantId,
+    channel: "discord",
+    bindingId: params.bindingId,
+    routeKey: incomingRouteKey,
+  });
+  if (exactSessionKey) {
+    return exactSessionKey;
+  }
+
+  if (params.route.kind === "guild" && params.route.threadId) {
+    const anchorRouteKey = params.route.channelId
+      ? buildDiscordGuildRouteKey({
+          guildId: params.route.guildId,
+          channelId: params.route.channelId,
+        })
+      : null;
+    const anchorSessionKey =
+      (anchorRouteKey
+        ? resolveSessionKeyForBindingRoute({
+            tenantId: params.tenantId,
+            channel: "discord",
+            bindingId: params.bindingId,
+            routeKey: anchorRouteKey,
+          })
+        : null) ??
+      resolveLatestSessionKeyForBinding({
+        tenantId: params.tenantId,
+        channel: "discord",
+        bindingId: params.bindingId,
+      }) ??
+      deriveDiscordSessionKey({
+        route: {
+          kind: "guild",
+          guildId: params.route.guildId,
+          ...(params.route.channelId ? { channelId: params.route.channelId } : {}),
+        },
+        channelId: params.route.channelId ?? params.channelId,
+      });
+    return buildDiscordThreadScopedSessionKey(anchorSessionKey, params.route.threadId);
+  }
+
+  return deriveDiscordSessionKey({
+    route: params.route,
+    channelId: params.channelId,
+  });
 }
 
 function buildWhatsAppRouteKey(chatJid: string, accountId = "default"): string {
@@ -2748,7 +3142,7 @@ function resolveTelegramBoundRoute(params: {
   if (!row) {
     return null;
   }
-  return parseTelegramRouteKey(String(row.route_key));
+  return parseTelegramRouteKey(resolveBoundRouteKeyFromSession(row));
 }
 
 function resolveDiscordBoundRoute(params: {
@@ -2764,7 +3158,7 @@ function resolveDiscordBoundRoute(params: {
   if (!row) {
     return null;
   }
-  return parseDiscordRouteKey(String(row.route_key));
+  return parseDiscordRouteKey(resolveBoundRouteKeyFromSession(row));
 }
 
 function resolveWhatsAppBoundRoute(params: {
@@ -2780,7 +3174,7 @@ function resolveWhatsAppBoundRoute(params: {
   if (!row) {
     return null;
   }
-  return parseWhatsAppRouteKey(String(row.route_key));
+  return parseWhatsAppRouteKey(resolveBoundRouteKeyFromSession(row));
 }
 
 async function resolveDiscordOutboundChannelId(params: {
@@ -2840,8 +3234,25 @@ function buildTelegramRouteKey(chatId: string, topicId?: number): string {
 }
 
 function deriveTelegramSessionKey(chatId: string, topicId?: number): string {
-  const base = chatId.startsWith("-") ? `tg:group:${chatId}` : `tg:chat:${chatId}`;
-  return topicId ? `${base}:thread:${topicId}` : base;
+  const isGroup = chatId.startsWith("-");
+  const base = isGroup
+    ? `agent:main:telegram:group:${chatId}`
+    : `agent:main:telegram:direct:${chatId}`;
+  if (!topicId) {
+    return base;
+  }
+  return isGroup ? `${base}:topic:${topicId}` : `${base}:thread:${topicId}`;
+}
+
+function resolveTelegramIncomingTopicId(params: {
+  isForum: boolean;
+  messageThreadId: unknown;
+}): number | undefined {
+  const explicitTopicId = readPositiveInt(params.messageThreadId);
+  if (explicitTopicId) {
+    return explicitTopicId;
+  }
+  return params.isForum ? TELEGRAM_GENERAL_TOPIC_ID : undefined;
 }
 
 function resolveTelegramBindingForIncoming(
@@ -3069,6 +3480,7 @@ function claimTelegramPairingToken(params: {
   token: string;
   chatId: string;
   topicId?: number;
+  chatType: "direct" | "group";
 }): { tenantId: string; bindingId: string; routeKey: string; sessionKey: string } | null {
   return runTokenClaimTransaction(() => {
     const now = Date.now();
@@ -3082,14 +3494,20 @@ function claimTelegramPairingToken(params: {
     }
 
     const tenantId = String(row.tenant_id);
-    const routeKey = buildTelegramRouteKey(params.chatId, params.topicId);
-    if (isRouteBoundByAnotherTenant({ channel: "telegram", routeKey, tenantId })) {
+    const claimRouteKey = buildTelegramRouteKey(params.chatId, params.topicId);
+    const boundRouteKey =
+      params.chatType === "direct"
+        ? buildTelegramRouteKey(params.chatId)
+        : buildTelegramRouteKey(params.chatId, params.topicId);
+    if (isRouteBoundByAnotherTenant({ channel: "telegram", routeKey: boundRouteKey, tenantId })) {
       return null;
     }
 
-    const existing = stmtSelectActiveBindingByTenantAndRoute.get(tenantId, "telegram", routeKey) as
-      | ExistingBindingRow
-      | undefined;
+    const existing = stmtSelectActiveBindingByTenantAndRoute.get(
+      tenantId,
+      "telegram",
+      boundRouteKey,
+    ) as ExistingBindingRow | undefined;
 
     const bindingId =
       (existing?.binding_id && String(existing.binding_id)) || `bind_${randomUUID()}`;
@@ -3099,8 +3517,8 @@ function claimTelegramPairingToken(params: {
           bindingId,
           tenantId,
           "telegram",
-          params.topicId ? "topic" : "chat",
-          routeKey,
+          boundRouteKey === claimRouteKey && params.topicId ? "topic" : "chat",
+          boundRouteKey,
           now,
           now,
         );
@@ -3114,13 +3532,19 @@ function claimTelegramPairingToken(params: {
 
     const preferredSessionKey = readNonEmptyString(row.session_key);
     const sessionKey =
-      preferredSessionKey || deriveTelegramSessionKey(params.chatId, params.topicId);
+      params.chatType === "direct" && params.topicId
+        ? buildThreadScopedSessionKey(
+            preferredSessionKey || deriveTelegramSessionKey(params.chatId),
+            params.chatId,
+            params.topicId,
+          )
+        : (preferredSessionKey ?? deriveTelegramSessionKey(params.chatId, params.topicId));
     stmtUpsertSessionRoute.run(
       tenantId,
       "telegram",
       sessionKey,
       bindingId,
-      JSON.stringify({ routeKey }),
+      JSON.stringify({ routeKey: claimRouteKey }),
       now,
     );
 
@@ -3129,15 +3553,15 @@ function claimTelegramPairingToken(params: {
       return null;
     }
 
-    stmtAttachPairingTokenBinding.run(bindingId, routeKey, tokenHash);
-    writeAuditLog(tenantId, "pairing_token_claimed", { bindingId, routeKey }, now);
-    return { tenantId, bindingId, routeKey, sessionKey };
+    stmtAttachPairingTokenBinding.run(bindingId, boundRouteKey, tokenHash);
+    writeAuditLog(tenantId, "pairing_token_claimed", { bindingId, routeKey: boundRouteKey }, now);
+    return { tenantId, bindingId, routeKey: boundRouteKey, sessionKey };
   });
 }
 
-function claimDiscordPairingTokenForRoute(params: {
+function claimDiscordPairingToken(params: {
   token: string;
-  routeKey: string;
+  route: DiscordBoundRoute;
   channelId: string;
 }): { tenantId: string; bindingId: string; routeKey: string; sessionKey: string } | null {
   return runTokenClaimTransaction(() => {
@@ -3154,10 +3578,17 @@ function claimDiscordPairingTokenForRoute(params: {
     if (!tenantId) {
       return null;
     }
-    if (readNonEmptyString(row.route_key) !== params.routeKey) {
+
+    const claimRouteKey = buildDiscordRouteKey(params.route);
+    const boundRouteKey = resolveDiscordBindingRouteKeyForClaim({
+      incomingRoute: params.route,
+    });
+    const boundRoute = parseDiscordRouteKey(boundRouteKey);
+    if (!boundRoute) {
       return null;
     }
-    const liveBinding = resolveLiveBindingByRouteKey("discord", params.routeKey);
+
+    const liveBinding = resolveLiveBindingByRouteKey("discord", boundRouteKey);
     if (liveBinding && liveBinding.tenant_id !== tenantId) {
       stmtDeactivateLiveBinding.run(now, liveBinding.binding_id, liveBinding.tenant_id);
       stmtDeleteSessionRoutesByBinding.run(liveBinding.binding_id, liveBinding.tenant_id);
@@ -3166,7 +3597,7 @@ function claimDiscordPairingTokenForRoute(params: {
         "pairing_unbound_by_route_takeover",
         {
           bindingId: liveBinding.binding_id,
-          routeKey: params.routeKey,
+          routeKey: boundRouteKey,
           takeoverTenantId: tenantId,
         },
         now,
@@ -3176,7 +3607,7 @@ function claimDiscordPairingTokenForRoute(params: {
     const existing = stmtSelectActiveBindingByTenantAndRoute.get(
       tenantId,
       "discord",
-      params.routeKey,
+      boundRouteKey,
     ) as ExistingBindingRow | undefined;
     if (existing?.status === "active") {
       return null;
@@ -3189,8 +3620,8 @@ function claimDiscordPairingTokenForRoute(params: {
           bindingId,
           tenantId,
           "discord",
-          "dm",
-          params.routeKey,
+          resolveDiscordBindingScope(boundRoute),
+          boundRouteKey,
           now,
           now,
         );
@@ -3207,19 +3638,41 @@ function claimDiscordPairingTokenForRoute(params: {
       return null;
     }
 
-    const route = parseDiscordRouteKey(params.routeKey);
-    if (!route) {
-      return null;
-    }
     const preferredSessionKey = readNonEmptyString(row.session_key);
     const sessionKey =
-      preferredSessionKey || deriveDiscordSessionKey({ route, channelId: params.channelId });
+      params.route.kind === "guild" && params.route.threadId
+        ? buildDiscordThreadScopedSessionKey(
+            preferredSessionKey ??
+              deriveDiscordSessionKey({
+                route:
+                  boundRoute.kind === "guild"
+                    ? {
+                        kind: "guild",
+                        guildId: boundRoute.guildId,
+                        ...(boundRoute.channelId ? { channelId: boundRoute.channelId } : {}),
+                      }
+                    : boundRoute,
+                channelId:
+                  boundRoute.kind === "guild"
+                    ? (boundRoute.channelId ??
+                      (params.route.kind === "guild"
+                        ? (params.route.channelId ?? params.channelId)
+                        : params.channelId))
+                    : params.channelId,
+              }),
+            params.route.threadId,
+          )
+        : (preferredSessionKey ??
+          deriveDiscordSessionKey({
+            route: params.route,
+            channelId: params.channelId,
+          }));
     stmtUpsertSessionRoute.run(
       tenantId,
       "discord",
       sessionKey,
       bindingId,
-      JSON.stringify({ routeKey: params.routeKey, channelId: params.channelId }),
+      JSON.stringify({ routeKey: claimRouteKey, channelId: params.channelId }),
       now,
     );
 
@@ -3228,12 +3681,12 @@ function claimDiscordPairingTokenForRoute(params: {
       return null;
     }
 
-    stmtAttachPairingTokenBinding.run(bindingId, params.routeKey, tokenHash);
-    writeAuditLog(tenantId, "pairing_token_claimed", { bindingId, routeKey: params.routeKey }, now);
+    stmtAttachPairingTokenBinding.run(bindingId, boundRouteKey, tokenHash);
+    writeAuditLog(tenantId, "pairing_token_claimed", { bindingId, routeKey: boundRouteKey }, now);
     return {
       tenantId,
       bindingId,
-      routeKey: params.routeKey,
+      routeKey: boundRouteKey,
       sessionKey,
     };
   });
@@ -3356,14 +3809,12 @@ async function forwardDiscordMessageToTenant(params: {
     return "ignored";
   }
 
-  const existingRoute = stmtSelectSessionKeyByBinding.get(
-    params.tenantId,
-    "discord",
-    params.bindingId,
-  ) as { session_key?: unknown } | undefined;
-  const sessionKey =
-    (typeof existingRoute?.session_key === "string" && existingRoute.session_key.trim()) ||
-    deriveDiscordSessionKey({ route: params.route, channelId: params.channelId });
+  const sessionKey = resolveDiscordInboundSessionKey({
+    tenantId: params.tenantId,
+    bindingId: params.bindingId,
+    route: params.route,
+    channelId: params.channelId,
+  });
 
   stmtUpsertSessionRoute.run(
     params.tenantId,
@@ -3676,17 +4127,19 @@ function enqueueWhatsAppInboundMessage(message: WebInboundMessage): void {
   }
 }
 
-function deriveDiscordSessionKey(params: { route: DiscordBoundRoute; channelId: string }): string {
+function deriveDiscordSessionKey(params: {
+  route: DiscordBoundRoute;
+  channelId: string;
+  agentId?: string;
+}): string {
+  const agentId = normalizeDiscordSessionAgentId(params.agentId ?? null);
   if (params.route.kind === "dm") {
-    return `dc:dm:${params.route.userId}`;
+    return buildDiscordDirectSessionKey(params.route.userId, agentId);
   }
-  if (params.route.threadId) {
-    return `dc:guild:${params.route.guildId}:thread:${params.route.threadId}`;
-  }
-  if (params.route.channelId) {
-    return `dc:guild:${params.route.guildId}:channel:${params.route.channelId}`;
-  }
-  return `dc:guild:${params.route.guildId}:channel:${params.channelId}`;
+  return buildDiscordChannelSessionKey(
+    params.route.threadId ?? params.route.channelId ?? params.channelId,
+    agentId,
+  );
 }
 
 async function resolveDiscordInboundChannelId(route: DiscordBoundRoute): Promise<string | null> {
@@ -3945,7 +4398,11 @@ async function forwardTelegramCallbackQueryToTenant(params: {
   if (!chatId) {
     return;
   }
-  const topicId = readPositiveInt(callbackMessage.message_thread_id);
+  const isForum = callbackMessage.chat?.is_forum === true;
+  const topicId = resolveTelegramIncomingTopicId({
+    isForum,
+    messageThreadId: callbackMessage.message_thread_id,
+  });
   const binding = resolveTelegramBindingForIncoming(chatId, topicId);
   if (!binding) {
     if (callbackQueryId) {
@@ -3990,22 +4447,20 @@ async function forwardTelegramCallbackQueryToTenant(params: {
       ? Math.trunc(callbackMessage.date) * 1_000
       : Date.now();
   const chatType = callbackMessage.chat?.type === "private" ? "direct" : "group";
-
-  const existingRoute = stmtSelectSessionKeyByBinding.get(
-    binding.tenantId,
-    "telegram",
-    binding.bindingId,
-  ) as { session_key?: unknown } | undefined;
-  const sessionKey =
-    (typeof existingRoute?.session_key === "string" && existingRoute.session_key.trim()) ||
-    deriveTelegramSessionKey(chatId, topicId);
+  const inboundRouteKey = buildTelegramRouteKey(chatId, topicId);
+  const sessionKey = resolveTelegramInboundSessionKey({
+    tenantId: binding.tenantId,
+    bindingId: binding.bindingId,
+    chatId,
+    topicId,
+  });
 
   stmtUpsertSessionRoute.run(
     binding.tenantId,
     "telegram",
     sessionKey,
     binding.bindingId,
-    JSON.stringify({ routeKey: binding.routeKey }),
+    JSON.stringify({ routeKey: inboundRouteKey }),
     Date.now(),
   );
 
@@ -4020,7 +4475,7 @@ async function forwardTelegramCallbackQueryToTenant(params: {
     chatType,
     messageId: callbackMessageId,
     timestampMs,
-    routeKey: binding.routeKey,
+    routeKey: inboundRouteKey,
     callbackData,
     callbackQueryId: callbackQueryId ?? undefined,
     rawCallbackQuery: params.callbackQuery,
@@ -4068,6 +4523,7 @@ async function handleTelegramBotControlCommand(params: {
   command: BotControlCommand;
   chatId: string;
   topicId?: number;
+  chatType: "direct" | "group";
   binding: { tenantId: string; bindingId: string; routeKey: string } | null;
 }) {
   if (params.command.kind === "help") {
@@ -4160,6 +4616,7 @@ async function handleTelegramBotControlCommand(params: {
     token: params.command.token,
     chatId: params.chatId,
     topicId: params.topicId,
+    chatType: params.chatType,
   });
   const notice = claimed
     ? renderPairingSuccessNotice("telegram")
@@ -4232,7 +4689,8 @@ async function handleDiscordBotControlCommand(params: {
     return { routeReset: false };
   }
   const tokenRow = peekActivePairingToken(params.command.token, "discord");
-  if (!tokenRow || readNonEmptyString(tokenRow.route_key) !== params.routeKey) {
+  const route = parseDiscordRouteKey(params.routeKey);
+  if (!route || !tokenRow) {
     const notice = renderPairingInvalidNotice("discord");
     await sendDiscordPairingNotice({
       channelId: params.channelId,
@@ -4245,9 +4703,9 @@ async function handleDiscordBotControlCommand(params: {
     bindingId: params.bindingId,
     auditEventType: "pairing_unbound_by_bot_switch",
   });
-  const claimed = claimDiscordPairingTokenForRoute({
+  const claimed = claimDiscordPairingToken({
     token: params.command.token,
-    routeKey: params.routeKey,
+    route,
     channelId: params.channelId,
   });
   const notice = claimed
@@ -4303,7 +4761,8 @@ async function handleDiscordBotControlCommandUnbound(params: {
     return;
   }
   const tokenRow = peekActivePairingToken(params.command.token, "discord");
-  if (!tokenRow || readNonEmptyString(tokenRow.route_key) !== params.routeKey) {
+  const route = parseDiscordRouteKey(params.routeKey);
+  if (!route || !tokenRow) {
     const notice = renderPairingInvalidNotice("discord");
     await sendDiscordPairingNotice({
       channelId: params.channelId,
@@ -4311,9 +4770,9 @@ async function handleDiscordBotControlCommandUnbound(params: {
     });
     return;
   }
-  const claimed = claimDiscordPairingTokenForRoute({
+  const claimed = claimDiscordPairingToken({
     token: params.command.token,
-    routeKey: params.routeKey,
+    route,
     channelId: params.channelId,
   });
   const notice = claimed
@@ -4459,7 +4918,11 @@ async function forwardTelegramUpdateToTenant(update: TelegramUpdate) {
   if (!chatId) {
     return;
   }
-  const topicId = readPositiveInt(message.message_thread_id);
+  const isForum = message.chat?.is_forum === true;
+  const topicId = resolveTelegramIncomingTopicId({
+    isForum,
+    messageThreadId: message.message_thread_id,
+  });
   const bodyText = typeof message.text === "string" ? message.text : null;
   const bodyCaption = typeof message.caption === "string" ? message.caption : null;
   const body = bodyText ?? bodyCaption ?? "";
@@ -4472,6 +4935,7 @@ async function forwardTelegramUpdateToTenant(update: TelegramUpdate) {
         command: botControlCommand,
         chatId,
         topicId,
+        chatType,
         binding,
       });
     } catch (error) {
@@ -4514,6 +4978,7 @@ async function forwardTelegramUpdateToTenant(update: TelegramUpdate) {
       token: pairingToken,
       chatId,
       topicId,
+      chatType,
     });
     if (!claimed) {
       try {
@@ -4603,22 +5068,20 @@ async function forwardTelegramUpdateToTenant(update: TelegramUpdate) {
     typeof message.date === "number" && Number.isFinite(message.date)
       ? Math.trunc(message.date) * 1_000
       : Date.now();
-
-  const existingRoute = stmtSelectSessionKeyByBinding.get(
-    binding.tenantId,
-    "telegram",
-    binding.bindingId,
-  ) as { session_key?: unknown } | undefined;
-  const sessionKey =
-    (typeof existingRoute?.session_key === "string" && existingRoute.session_key.trim()) ||
-    deriveTelegramSessionKey(chatId, topicId);
+  const inboundRouteKey = buildTelegramRouteKey(chatId, topicId);
+  const sessionKey = resolveTelegramInboundSessionKey({
+    tenantId: binding.tenantId,
+    bindingId: binding.bindingId,
+    chatId,
+    topicId,
+  });
 
   stmtUpsertSessionRoute.run(
     binding.tenantId,
     "telegram",
     sessionKey,
     binding.bindingId,
-    JSON.stringify({ routeKey: binding.routeKey }),
+    JSON.stringify({ routeKey: inboundRouteKey }),
     Date.now(),
   );
 
@@ -4633,7 +5096,7 @@ async function forwardTelegramUpdateToTenant(update: TelegramUpdate) {
     chatType,
     messageId,
     timestampMs,
-    routeKey: binding.routeKey,
+    routeKey: inboundRouteKey,
     rawMessage: message,
     rawUpdate: update,
     media: inboundMedia.media,
@@ -4817,7 +5280,7 @@ async function forwardDiscordBindingInbound(params: ActiveDiscordBindingRow) {
         continue;
       }
       const tokenRow = peekActivePairingToken(pairingToken, "discord");
-      if (!tokenRow || readNonEmptyString(tokenRow.route_key) !== params.route_key) {
+      if (!tokenRow) {
         try {
           const notice = renderPairingInvalidNotice("discord");
           await sendDiscordPairingNotice({
@@ -4843,9 +5306,9 @@ async function forwardDiscordBindingInbound(params: ActiveDiscordBindingRow) {
         lastAckedMessageId = messageId;
         continue;
       }
-      const claimed = claimDiscordPairingTokenForRoute({
+      const claimed = claimDiscordPairingToken({
         token: pairingToken,
-        routeKey: params.route_key,
+        route,
         channelId,
       });
       if (!claimed) {
@@ -4947,7 +5410,10 @@ async function runDiscordInboundPollPass() {
   const bindings = stmtListActiveDiscordBindings.all() as ActiveDiscordBindingRow[];
   for (const binding of bindings) {
     const route = parseDiscordRouteKey(binding.route_key);
-    if (discordGatewayDmEnabled && route?.kind === "dm") {
+    if (discordGatewayReady && discordGatewayDmEnabled && route?.kind === "dm") {
+      continue;
+    }
+    if (discordGatewayReady && discordGatewayGuildEnabled && route?.kind === "guild") {
       continue;
     }
     try {
@@ -4997,23 +5463,33 @@ async function runDiscordInboundLoop() {
   }
 }
 
-async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
+async function handleDiscordGatewayMessage(message: Record<string, unknown>) {
   const messageId = readUnsignedNumericString(message.id);
-  const channelId = readUnsignedNumericString(message.channel_id);
-  const guildId = readUnsignedNumericString(message.guild_id);
   const author = asRecord(message.author);
   const fromId = readUnsignedNumericString(author?.id);
   const isBot = author?.bot === true;
-  if (!messageId || !channelId || !fromId || isBot) {
-    return;
-  }
-  if (guildId) {
-    // Guild traffic stays on route-scoped polling for now.
+  if (!messageId || !fromId || isBot) {
     return;
   }
 
-  const routeKey = buildDiscordDmRouteKey(fromId);
-  const liveBinding = resolveLiveBindingByRouteKey("discord", routeKey);
+  const incoming = await resolveDiscordIncomingRouteFromMessage({
+    message,
+    fromId,
+  });
+  if (!incoming) {
+    return;
+  }
+  const route = incoming.route;
+  const channelId = incoming.channelId;
+  if (route.kind === "dm" && !discordGatewayDmEnabled) {
+    return;
+  }
+  if (route.kind === "guild" && !discordGatewayGuildEnabled) {
+    return;
+  }
+
+  const incomingRouteKey = buildDiscordRouteKey(route);
+  const liveBinding = resolveDiscordBindingForIncoming(route);
   const body = typeof message.content === "string" ? message.content : "";
 
   const botControlCommand = parseBotControlCommand(body);
@@ -5023,24 +5499,24 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
         await handleDiscordBotControlCommandUnbound({
           command: botControlCommand,
           channelId,
-          routeKey,
+          routeKey: incomingRouteKey,
         });
       } else {
         await handleDiscordBotControlCommand({
           command: botControlCommand,
           channelId,
-          routeKey,
-          tenantId: liveBinding.tenant_id,
-          bindingId: liveBinding.binding_id,
-          status: liveBinding.status === "pending" ? "pending" : "active",
+          routeKey: liveBinding.routeKey,
+          tenantId: liveBinding.tenantId,
+          bindingId: liveBinding.bindingId,
+          status: liveBinding.status,
         });
       }
     } catch (error) {
       log({
         type: "discord_bot_control_error",
-        tenantId: liveBinding?.tenant_id,
-        bindingId: liveBinding?.binding_id,
-        routeKey,
+        tenantId: liveBinding?.tenantId,
+        bindingId: liveBinding?.bindingId,
+        routeKey: liveBinding?.routeKey ?? incomingRouteKey,
         messageId,
         error: String(error),
       });
@@ -5052,7 +5528,7 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
   if (!liveBinding || liveBinding.status === "pending") {
     if (!pairingToken) {
       const shouldSendUnpairedNotice =
-        isDiscordCommandText(body) || hasDiscordMessageContent(message);
+        isDiscordCommandText(body) || (route.kind === "dm" && hasDiscordMessageContent(message));
       if (shouldSendUnpairedNotice) {
         try {
           const notice = renderUnpairedHintNotice("discord");
@@ -5063,8 +5539,8 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
         } catch (error) {
           log({
             type: "discord_unpaired_command_notice_error",
-            tenantId: liveBinding?.tenant_id,
-            bindingId: liveBinding?.binding_id,
+            tenantId: liveBinding?.tenantId,
+            bindingId: liveBinding?.bindingId,
             messageId,
             error: String(error),
           });
@@ -5074,7 +5550,7 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
     }
 
     const tokenRow = peekActivePairingToken(pairingToken, "discord");
-    if (!tokenRow || readNonEmptyString(tokenRow.route_key) !== routeKey) {
+    if (!tokenRow) {
       try {
         const notice = renderPairingInvalidNotice("discord");
         await sendDiscordPairingNotice({
@@ -5084,25 +5560,25 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
       } catch (error) {
         log({
           type: "discord_pairing_invalid_notice_error",
-          tenantId: liveBinding?.tenant_id,
-          bindingId: liveBinding?.binding_id,
+          tenantId: liveBinding?.tenantId,
+          bindingId: liveBinding?.bindingId,
           messageId,
           error: String(error),
         });
       }
       log({
         type: "discord_pairing_token_invalid",
-        tenantId: liveBinding?.tenant_id,
-        bindingId: liveBinding?.binding_id,
+        tenantId: liveBinding?.tenantId,
+        bindingId: liveBinding?.bindingId,
         messageId,
         channelId,
       });
       return;
     }
 
-    const claimed = claimDiscordPairingTokenForRoute({
+    const claimed = claimDiscordPairingToken({
       token: pairingToken,
-      routeKey,
+      route,
       channelId,
     });
     try {
@@ -5116,8 +5592,8 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
     } catch (error) {
       log({
         type: "discord_pairing_notice_error",
-        tenantId: claimed?.tenantId ?? liveBinding?.tenant_id,
-        bindingId: claimed?.bindingId ?? liveBinding?.binding_id,
+        tenantId: claimed?.tenantId ?? liveBinding?.tenantId,
+        bindingId: claimed?.bindingId ?? liveBinding?.bindingId,
         messageId,
         error: String(error),
       });
@@ -5139,19 +5615,19 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
   if (pairingToken) {
     log({
       type: "discord_pairing_token_ignored_bound_route",
-      tenantId: liveBinding.tenant_id,
-      bindingId: liveBinding.binding_id,
-      routeKey,
+      tenantId: liveBinding.tenantId,
+      bindingId: liveBinding.bindingId,
+      routeKey: liveBinding.routeKey,
       messageId,
     });
     return;
   }
 
   await forwardDiscordMessageToTenant({
-    tenantId: liveBinding.tenant_id,
-    bindingId: liveBinding.binding_id,
-    routeKey,
-    route: { kind: "dm", userId: fromId },
+    tenantId: liveBinding.tenantId,
+    bindingId: liveBinding.bindingId,
+    routeKey: incomingRouteKey,
+    route,
     channelId,
     message,
     messageId,
@@ -5163,9 +5639,10 @@ async function handleDiscordGatewayDmMessage(message: Record<string, unknown>) {
 async function runDiscordGatewayDmSession(): Promise<void> {
   const gatewayUrl = await fetchDiscordGatewayUrl();
   const token = requireDiscordBotToken();
+  discordGatewayReady = false;
   const intents =
-    Number.isFinite(discordGatewayDmIntents) && discordGatewayDmIntents > 0
-      ? Math.trunc(discordGatewayDmIntents)
+    Number.isFinite(discordGatewayIntents) && discordGatewayIntents > 0
+      ? Math.trunc(discordGatewayIntents)
       : 36_864;
 
   await new Promise<void>((resolve) => {
@@ -5185,6 +5662,7 @@ async function runDiscordGatewayDmSession(): Promise<void> {
         return;
       }
       settled = true;
+      discordGatewayReady = false;
       clearHeartbeat();
       resolve();
     };
@@ -5260,6 +5738,7 @@ async function runDiscordGatewayDmSession(): Promise<void> {
       const eventType = typeof frame.t === "string" ? frame.t : "";
       if (eventType === "READY") {
         const ready = asRecord(frame.d);
+        discordGatewayReady = true;
         log({
           type: "discord_gateway_dm_ready",
           sessionId: readNonEmptyString(ready?.session_id) ?? null,
@@ -5274,7 +5753,7 @@ async function runDiscordGatewayDmSession(): Promise<void> {
       if (!eventData) {
         return;
       }
-      void handleDiscordGatewayDmMessage(eventData).catch((error) => {
+      void handleDiscordGatewayMessage(eventData).catch((error) => {
         log({
           type: "discord_gateway_dm_event_error",
           error: String(error),
@@ -5301,7 +5780,7 @@ async function runDiscordGatewayDmSession(): Promise<void> {
 }
 
 async function runDiscordGatewayDmLoop() {
-  if (!discordInboundEnabled || !discordGatewayDmEnabled) {
+  if (!discordInboundEnabled || (!discordGatewayDmEnabled && !discordGatewayGuildEnabled)) {
     return;
   }
 
@@ -5878,13 +6357,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const sessionKey = readNonEmptyString(body.sessionKey) ?? undefined;
-      const routeKey = readNonEmptyString(body.routeKey) ?? undefined;
       const ttlSec = readPositiveInt(body.ttlSec);
       const result = issuePairingTokenForTenant({
         tenant,
         channel,
         sessionKey,
-        routeKey,
         ttlSec,
       });
       sendJson(res, result.statusCode, result.payload);
@@ -6080,7 +6557,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         const to = boundRoute.chatId;
-        const messageThreadId = requestedThreadId ?? boundRoute.topicId;
+        const messageThreadId = boundRoute.topicId ?? requestedThreadId;
+        const isGeneralForumTopic =
+          boundRoute.topicId === TELEGRAM_GENERAL_TOPIC_ID && to.startsWith("-");
         const telegramRaw = asRecord(rawOutbound?.telegram);
         const telegramRawMethod = readNonEmptyString(telegramRaw?.method);
         const telegramRawBody = asRecord(telegramRaw?.body);
@@ -6109,12 +6588,16 @@ const server = http.createServer(async (req, res) => {
               telegramMethod === "sendMessage" ||
               telegramMethod === "sendPhoto" ||
               telegramMethod === "sendChatAction";
-            if (
-              supportsThreadId &&
-              messageThreadId &&
-              !readPositiveInt(finalBody.message_thread_id)
-            ) {
-              finalBody.message_thread_id = messageThreadId;
+            if (supportsThreadId) {
+              if (boundRoute.topicId) {
+                if (isGeneralForumTopic && telegramMethod !== "sendChatAction") {
+                  delete finalBody.message_thread_id;
+                } else {
+                  finalBody.message_thread_id = boundRoute.topicId;
+                }
+              } else if (messageThreadId && !readPositiveInt(finalBody.message_thread_id)) {
+                finalBody.message_thread_id = messageThreadId;
+              }
             }
           }
           const { response, result } = await sendTelegram(telegramMethod, finalBody);
@@ -6474,11 +6957,16 @@ server.listen(port, host, () => {
       pollIntervalMs: Math.max(200, Math.trunc(discordPollIntervalMs)),
       bootstrapLatest: discordBootstrapLatest,
       gatewayDmEnabled: discordGatewayDmEnabled,
+      gatewayGuildEnabled: discordGatewayGuildEnabled,
+      gatewayIntents:
+        Number.isFinite(discordGatewayIntents) && discordGatewayIntents > 0
+          ? Math.trunc(discordGatewayIntents)
+          : 36_864,
     });
     void runDiscordInboundLoop().catch((error) => {
       log({ type: "discord_inbound_loop_fatal", error: String(error) });
     });
-    if (discordGatewayDmEnabled) {
+    if (discordGatewayDmEnabled || discordGatewayGuildEnabled) {
       void runDiscordGatewayDmLoop().catch((error) => {
         log({ type: "discord_gateway_dm_loop_fatal", error: String(error) });
       });
