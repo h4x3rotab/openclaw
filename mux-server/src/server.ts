@@ -5688,7 +5688,7 @@ async function runDiscordGatewayDmSession(): Promise<void> {
   const intents =
     Number.isFinite(discordGatewayIntents) && discordGatewayIntents > 0
       ? Math.trunc(discordGatewayIntents)
-      : 36_864;
+      : discordGatewayDefaultIntents;
 
   await new Promise<void>((resolve) => {
     let seq: number | null = null;
@@ -7016,7 +7016,7 @@ server.listen(port, host, () => {
       gatewayIntents:
         Number.isFinite(discordGatewayIntents) && discordGatewayIntents > 0
           ? Math.trunc(discordGatewayIntents)
-          : 36_864,
+          : discordGatewayDefaultIntents,
     });
     void runDiscordInboundLoop().catch((error) => {
       log({ type: "discord_inbound_loop_fatal", error: String(error) });
