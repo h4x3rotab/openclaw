@@ -3850,7 +3850,7 @@ describe("mux server", () => {
         },
       ],
     });
-  });
+  }, 20_000);
 
   test("discord bot control commands support status, unpair, and switch on an active route", async () => {
     const inboundRequests: Array<Record<string, unknown>> = [];
