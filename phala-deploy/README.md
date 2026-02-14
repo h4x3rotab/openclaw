@@ -332,6 +332,15 @@ If your CVM is destroyed (S3 mode only):
 | `cvm-scp`                | Copy files to/from the container                                      |
 | `S3_STORAGE.md`          | Detailed S3 encryption documentation                                  |
 
+## CVM environment notes
+
+- The Ubuntu base image is minimal: install `unzip` (for bun), `tmux`, and use nodesource repo for Node 22 (default apt gives Node 12).
+- Entrypoint starts SSH before dockerd — SSH is always available for debugging, even if dockerd fails.
+- Backgrounding over non-interactive SSH is unreliable; use tmux inside the CVM.
+- Docker uses static binaries from `download.docker.com/linux/static/stable/` (not `apt docker-ce`). Do **not** bind-mount Docker binaries from the CVM host (ELF interpreter mismatch: host `/lib/ld-linux-x86-64.so.2` vs container `/lib64/`).
+- Dockerfile: `build-essential` is installed, used for `npm install`, then purged in the same `RUN` layer. Never split install and purge across layers.
+- Auto-update is disabled in bootstrap config (`update.checkOnStart=false`); updates happen via Docker image rebuilds.
+
 ## Troubleshooting
 
 **FUSE mount falls back to sync mode**
@@ -350,3 +359,15 @@ If your CVM is destroyed (S3 mode only):
 **Docker daemon fails inside CVM**
 
 - This is non-critical (gateway works without it). The CVM kernel may not support all iptables modules. Check logs for details.
+
+**dockerd fails to start on container restart**
+
+- Stale PID files cause "process with PID N is still running". The entrypoint cleans them (`rm -f /var/run/docker.pid /var/run/containerd/containerd.pid`), but if you start dockerd manually, clean them yourself.
+
+**Docker networking / iptables errors**
+
+- The CVM kernel does **not** support `nf_tables`. Ubuntu 24.04 defaults to the nft backend, which fails with "Could not fetch rule set generation id: Invalid argument". Fix: `update-alternatives --set iptables /usr/sbin/iptables-legacy` in the Dockerfile. ip6tables warnings are harmless.
+
+**Docker-in-Docker storage**
+
+- DinD inside the CVM requires `--storage-driver=vfs` (overlay-on-overlay fails inside the TEE VM).
