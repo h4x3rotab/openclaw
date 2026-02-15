@@ -116,21 +116,16 @@ if [[ "$NO_BUILD" -eq 0 ]]; then
   run pnpm --dir "$ROOT_DIR" ui:build
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    printf '%q ' npm --prefix "$ROOT_DIR" pack
-    printf '\n'
-    printf '%q ' bash "${SCRIPT_DIR}/make-openclaw-tgz.sh" "${SCRIPT_DIR}/openclaw.tgz"
+    printf '%q ' npm --prefix "$ROOT_DIR" pack --pack-destination "$SCRIPT_DIR"
     printf '\n'
     log "dry-run: skipping tarball creation"
   else
-    # Prefer `npm pack` for fidelity; fall back to `tar` when pack is unavailable.
-    if PACK_OUT="$(npm --prefix "$ROOT_DIR" pack 2>/dev/null)"; then
-      TGZ_NAME="$(printf '%s\n' "$PACK_OUT" | tail -n 1 | tr -d '[:space:]')"
-      [[ -n "$TGZ_NAME" ]] || die "failed to resolve npm pack output"
-      mv -f "$ROOT_DIR/$TGZ_NAME" "$SCRIPT_DIR/openclaw.tgz"
-      log "updated tarball: $SCRIPT_DIR/openclaw.tgz"
-    else
-      run bash "${SCRIPT_DIR}/make-openclaw-tgz.sh" "${SCRIPT_DIR}/openclaw.tgz"
-    fi
+    PACK_OUT="$(npm --prefix "$ROOT_DIR" pack --pack-destination "$SCRIPT_DIR")"
+    TGZ_NAME="$(printf '%s\n' "$PACK_OUT" | tail -n 1 | tr -d '[:space:]')"
+    [[ -n "$TGZ_NAME" ]] || die "failed to resolve npm pack output"
+    rm -f "$SCRIPT_DIR/openclaw.tgz"
+    mv -f "$SCRIPT_DIR/$TGZ_NAME" "$SCRIPT_DIR/openclaw.tgz"
+    log "updated tarball: $SCRIPT_DIR/openclaw.tgz"
   fi
 fi
 
