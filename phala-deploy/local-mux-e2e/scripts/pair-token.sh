@@ -5,16 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${STACK_DIR}/docker-compose.yml"
 OPENCLAW_INBOUND_INTERNAL="http://openclaw:18789/v1/mux/inbound"
-: "${MUX_REGISTER_KEY:=local-mux-e2e-register-key}"
+: "${MUX_ADMIN_TOKEN:=local-mux-e2e-admin-token}"
 : "${MUX_BASE_URL:=http://127.0.0.1:18891}"
 
 CHANNEL="${1:-}"
 SESSION_KEY="${2:-}"
-ROUTE_KEY="${3:-}"
 TTL_SEC="${TTL_SEC:-900}"
 
 if [[ -z "${CHANNEL}" ]]; then
-  echo "usage: $0 <telegram|discord|whatsapp> [sessionKey] [routeKey]" >&2
+  echo "usage: $0 <telegram|discord|whatsapp> [sessionKey]" >&2
   exit 1
 fi
 
@@ -42,38 +41,18 @@ if [[ -z "${openclaw_id}" ]]; then
   exit 1
 fi
 
-register_payload="$(jq -nc \
-  --arg openclawId "${openclaw_id}" \
-  --arg inboundUrl "${OPENCLAW_INBOUND_INTERNAL}" \
-  '{openclawId:$openclawId,inboundUrl:$inboundUrl,inboundTimeoutMs:15000}')"
-
-# Note: OpenClaw already auto-registers with mux on gateway boot, but /v1/instances/register
-# is also the simplest self-contained way for this script to mint a runtime JWT for /v1/pairings/token.
-register_response="$(curl -sS -X POST "${MUX_BASE_URL}/v1/instances/register" \
-  -H "Authorization: Bearer ${MUX_REGISTER_KEY}" \
-  -H "Content-Type: application/json" \
-  --data "${register_payload}")"
-
-runtime_token="$(echo "${register_response}" | jq -r '.runtimeToken // empty')"
-if [[ "$(echo "${register_response}" | jq -r '.ok // false')" != "true" || -z "${runtime_token}" ]]; then
-  echo "${register_response}" | jq . >&2 || true
-  echo "[local-mux-e2e] instance register failed" >&2
-  exit 1
-fi
-
 payload="$(jq -nc \
   --arg channel "${CHANNEL}" \
   --arg sessionKey "${SESSION_KEY}" \
-  --arg routeKey "${ROUTE_KEY}" \
   --arg openclawId "${openclaw_id}" \
+  --arg inboundUrl "${OPENCLAW_INBOUND_INTERNAL}" \
   --argjson ttlSec "${TTL_SEC}" \
-  '{channel:$channel,ttlSec:$ttlSec,openclawId:$openclawId}
+  '{channel:$channel,ttlSec:$ttlSec,openclawId:$openclawId,inboundUrl:$inboundUrl,inboundTimeoutMs:15000}
    + (if $sessionKey == "" then {} else {sessionKey:$sessionKey} end)
-   + (if $routeKey == "" then {} else {routeKey:$routeKey} end)')"
+  ')"
 
-response="$(curl -sS -X POST "${MUX_BASE_URL}/v1/pairings/token" \
-  -H "Authorization: Bearer ${runtime_token}" \
-  -H "X-OpenClaw-Id: ${openclaw_id}" \
+response="$(curl -sS -X POST "${MUX_BASE_URL}/v1/admin/pairings/token" \
+  -H "Authorization: Bearer ${MUX_ADMIN_TOKEN}" \
   -H "Content-Type: application/json" \
   --data "${payload}")"
 

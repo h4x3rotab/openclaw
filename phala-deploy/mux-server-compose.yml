@@ -13,7 +13,8 @@ services:
       MUX_IDEMPOTENCY_TTL_MS: 600000
       # Shared key used only for POST /v1/instances/register (runtime JWT minting).
       MUX_REGISTER_KEY: ${MUX_REGISTER_KEY:?set MUX_REGISTER_KEY}
-      MUX_ADMIN_TOKEN: ${MUX_ADMIN_TOKEN:-}
+      # Enables control-plane pairing token issuance (`POST /v1/admin/pairings/token`).
+      MUX_ADMIN_TOKEN: ${MUX_ADMIN_TOKEN:?set MUX_ADMIN_TOKEN}
       MUX_OPENCLAW_ACCOUNT_ID: "mux"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN}

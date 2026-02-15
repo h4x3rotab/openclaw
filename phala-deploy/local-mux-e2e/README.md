@@ -5,7 +5,8 @@ This stack mirrors the production shape on one machine:
 - `openclaw` container (same `phala-deploy/Dockerfile` path used for CVM image)
 - `mux-server` container (Telegram + Discord + WhatsApp inbound/outbound)
 - one shared register key (`MUX_REGISTER_KEY`) used only for `POST /v1/instances/register`
-- per-instance runtime JWT (mux -> OpenClaw) used for runtime mux APIs (pairings/outbound/etc)
+- per-instance runtime JWT (mux -> OpenClaw) used for runtime mux APIs (outbound/etc)
+- one admin token (`MUX_ADMIN_TOKEN`) used only for control-plane APIs (pairing token issuance)
 - per-delivery inbound JWT (mux -> OpenClaw) used for inbound delivery to OpenClaw
 
 ## Why this is safe for testing
@@ -69,8 +70,8 @@ What `pair-token.sh` does:
 
 1. Reads `openclawId` from the OpenClaw container device identity.
    - OpenClaw creates this identity on first boot and persists it at `/root/.openclaw/identity/device.json`.
-2. Calls `POST /v1/instances/register` to mint a runtime JWT (idempotent; OpenClaw also auto-registers on boot).
-3. Calls `POST /v1/pairings/token` using that runtime JWT.
+   - When `MASTER_KEY` is set (default in this stack), the device identity is derived deterministically so accidental deletion of `device.json` is recoverable after restart.
+2. Calls `POST /v1/admin/pairings/token` using `MUX_ADMIN_TOKEN` (idempotent; also upserts the tenant inbound target).
 
 Then redeem token in channel:
 

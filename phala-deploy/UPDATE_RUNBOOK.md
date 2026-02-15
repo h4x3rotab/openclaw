@@ -15,6 +15,9 @@ Do not run both services in one CVM.
 2. Keep images digest-pinned in compose.
 3. `MUX_REGISTER_KEY` must match OpenClaw `gateway.http.endpoints.mux.registerKey`.
 4. OpenClaw must have `gateway.http.endpoints.mux.inboundUrl` set to a public URL reachable by mux.
+5. OpenClaw device identity is stable when `MASTER_KEY` is stable:
+   - `openclawId` is the device `deviceId` from `/root/.openclaw/identity/device.json`
+   - when `MASTER_KEY` is set, OpenClaw derives the device keypair deterministically, so deleting `device.json` is recoverable after restart
 
 ## One-time local setup
 
@@ -61,6 +64,7 @@ Create mux deploy env (example):
 ```bash
 cat >/tmp/mux-phala-deploy.env <<'EOF'
 MUX_REGISTER_KEY=replace-with-shared-register-key
+MUX_ADMIN_TOKEN=replace-with-mux-admin-token
 TELEGRAM_BOT_TOKEN=replace-with-telegram-token
 DISCORD_BOT_TOKEN=replace-with-discord-token
 EOF
@@ -88,7 +92,7 @@ Deploy without `rv-exec`:
 Generate pairing token without `rv-exec`:
 
 ```bash
-export MUX_REGISTER_KEY=replace-with-shared-register-key
+export MUX_ADMIN_TOKEN=replace-with-mux-admin-token
 export PHALA_MUX_CVM_ID=<mux-cvm-uuid>
 export PHALA_OPENCLAW_CVM_ID=<openclaw-cvm-uuid>
 export CVM_SSH_HOST=<openclaw-app-id>-1022.<gateway-domain>
@@ -174,14 +178,14 @@ Pairing token generation is target-driven:
 - use OpenClaw session target (`sessionKey`) to choose where the conversation lands
 - do not use inbound sender identity to select OpenClaw target
 
-Issue pairing token (register key -> runtime JWT -> pairing token):
+Issue pairing token (admin token):
 
 ```bash
 export PHALA_MUX_CVM_ID=<mux-cvm-uuid>
 export PHALA_OPENCLAW_CVM_ID=<openclaw-cvm-uuid>
 export CVM_SSH_HOST=<openclaw-app-id>-1022.<gateway-domain>
 
-rv-exec MUX_REGISTER_KEY -- \
+rv-exec MUX_ADMIN_TOKEN -- \
   bash -lc './phala-deploy/mux-pair-token.sh telegram agent:main:main'
 ```
 

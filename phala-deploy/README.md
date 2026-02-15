@@ -154,7 +154,8 @@ Use this when rolling out shared mux bots plus tenant OpenClaw instances.
    - WhatsApp auth snapshot path (`/wa-auth/default`)
 2. Inject mux runtime secrets from `rv`:
    - `MUX_REGISTER_KEY` (must match tenant OpenClaw `gateway.http.endpoints.mux.registerKey`)
-   - optional: `MUX_ADMIN_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `MUX_JWT_PRIVATE_KEY`
+   - `MUX_ADMIN_TOKEN` (required for control-plane pairing token issuance)
+   - optional: `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `MUX_JWT_PRIVATE_KEY`
 3. For each tenant OpenClaw instance:
    - set `gateway.http.endpoints.mux.baseUrl`
    - set `gateway.http.endpoints.mux.registerKey`
@@ -162,7 +163,7 @@ Use this when rolling out shared mux bots plus tenant OpenClaw instances.
    - enable channel account `mux` for `telegram`, `discord`, `whatsapp`
 4. OpenClaw auto-registers itself with mux on boot (register key -> runtime JWT).
 5. Validate with live checks:
-   - pair chat using token (`/v1/pairings/token`)
+   - pair chat using token (`/v1/admin/pairings/token`)
    - send `/help` via mux channel
    - verify OpenClaw version and health via `./phala-deploy/cvm-exec`
 
@@ -310,6 +311,7 @@ If your CVM is destroyed (S3 mode only):
 2. The entrypoint derives the same keys, mounts S3, and everything is restored
 3. Config, agents, and memory are all recovered automatically
 4. The gateway auth token is the same — existing clients reconnect without changes
+5. The OpenClaw device identity is also the same — mux pairings remain stable as long as the mux DB is intact
 
 ## File reference
 
@@ -323,7 +325,7 @@ If your CVM is destroyed (S3 mode only):
 | `build-pin-mux-image.sh` | Rebuild mux image, push, and pin mux compose digest                   |
 | `cvm-rollout.sh`         | Standardized multi-CVM deploy flow with `rv-exec` env materialization |
 | `cvm-rollout-targets.sh` | Role-aware deploy wrapper with CVM role safety checks                 |
-| `mux-pair-token.sh`      | Mint mux pairing token for a tenant OpenClaw instance (runtime JWT)   |
+| `mux-pair-token.sh`      | Mint mux pairing token for a tenant OpenClaw instance (admin API)     |
 | `UPDATE_RUNBOOK.md`      | Dedicated repeatable update runbook                                   |
 | `secrets/.env`           | Legacy local env-file workflow (prefer `rv-exec --dotenv`)            |
 | `cvm-ssh`                | Interactive SSH into the container                                    |

@@ -29,7 +29,7 @@ Usage:
   $(basename "$0") <telegram|discord|whatsapp> [sessionKey]
 
 Environment:
-  MUX_REGISTER_KEY            (required) shared key for POST /v1/instances/register
+  MUX_ADMIN_TOKEN             (required) mux admin token for POST /v1/admin/pairings/token
   PHALA_MUX_CVM_ID            (optional) mux CVM UUID (used to derive mux base URL)
   PHALA_OPENCLAW_CVM_ID       (optional) OpenClaw CVM UUID (used to derive inbound URL)
   PHALA_MUX_BASE_URL          (optional) mux base URL override (example: https://<app>-18891.<gateway>)
@@ -40,8 +40,7 @@ Environment:
   INBOUND_TIMEOUT_MS          (optional) mux -> OpenClaw inbound timeout in ms (default: 15000)
 
 Notes:
-  - This is instance-centric: OpenClaw "registers itself" by calling POST /v1/instances/register.
-  - We call register here only to mint a short-lived runtime JWT for calling POST /v1/pairings/token.
+  - This uses mux admin auth only (control-plane flow). It does not require runtime JWT auth.
 USAGE
 }
 
@@ -79,7 +78,7 @@ fi
 require_cmd curl
 require_cmd jq
 
-: "${MUX_REGISTER_KEY:?set MUX_REGISTER_KEY}"
+: "${MUX_ADMIN_TOKEN:?set MUX_ADMIN_TOKEN}"
 
 if [[ -z "$MUX_BASE_URL" ]]; then
   require_cmd phala
@@ -102,33 +101,18 @@ log "mux base URL: $MUX_BASE_URL"
 log "openclaw inbound URL: $OPENCLAW_INBOUND_URL"
 log "openclaw id: $OPENCLAW_ID"
 
-register_payload="$(jq -nc \
+pair_payload="$(jq -nc \
   --arg openclawId "$OPENCLAW_ID" \
   --arg inboundUrl "$OPENCLAW_INBOUND_URL" \
   --argjson inboundTimeoutMs "$INBOUND_TIMEOUT_MS" \
-  '{openclawId:$openclawId,inboundUrl:$inboundUrl,inboundTimeoutMs:$inboundTimeoutMs}')"
-
-register_response="$(curl -fsS -X POST "$MUX_BASE_URL/v1/instances/register" \
-  -H "Authorization: Bearer $MUX_REGISTER_KEY" \
-  -H "Content-Type: application/json" \
-  --data "$register_payload")"
-
-runtime_token="$(printf '%s' "$register_response" | jq -r '.runtimeToken // empty')"
-if [[ -z "$runtime_token" || "$(printf '%s' "$register_response" | jq -r '.ok // false')" != "true" ]]; then
-  printf '%s\n' "$register_response" | jq . >&2 || true
-  die "instance register failed"
-fi
-
-pair_payload="$(jq -nc \
   --arg channel "$CHANNEL" \
   --arg sessionKey "$SESSION_KEY" \
   --argjson ttlSec "$TTL_SEC" \
-  '{channel:$channel,ttlSec:$ttlSec}
+  '{openclawId:$openclawId,inboundUrl:$inboundUrl,inboundTimeoutMs:$inboundTimeoutMs,channel:$channel,ttlSec:$ttlSec}
    + (if $sessionKey == "" then {} else {sessionKey:$sessionKey} end)')"
 
-pair_response="$(curl -fsS -X POST "$MUX_BASE_URL/v1/pairings/token" \
-  -H "Authorization: Bearer $runtime_token" \
-  -H "X-OpenClaw-Id: $OPENCLAW_ID" \
+pair_response="$(curl -fsS -X POST "$MUX_BASE_URL/v1/admin/pairings/token" \
+  -H "Authorization: Bearer $MUX_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   --data "$pair_payload")"
 
