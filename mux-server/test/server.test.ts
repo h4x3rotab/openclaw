@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
 const muxDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_ADMIN_TOKEN = "test-admin-token";
 
 type RunningServer = {
   process: ChildProcessWithoutNullStreams;
@@ -89,6 +90,7 @@ async function startServer(options?: {
       NODE_ENV: "test",
       TELEGRAM_BOT_TOKEN: "dummy-token",
       DISCORD_BOT_TOKEN: "dummy-discord-token",
+      MUX_ADMIN_TOKEN: DEFAULT_ADMIN_TOKEN,
       MUX_API_KEY: options?.apiKey ?? "test-key",
       ...(options?.tenantsJson ? { MUX_TENANTS_JSON: options.tenantsJson } : {}),
       ...(options?.pairingCodesJson ? { MUX_PAIRING_CODES_JSON: options.pairingCodesJson } : {}),
@@ -351,27 +353,6 @@ async function unbindPairing(params: { port: number; apiKey: string; bindingId: 
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ bindingId: params.bindingId }),
-  });
-}
-
-async function createPairingToken(params: {
-  port: number;
-  apiKey: string;
-  channel: string;
-  sessionKey?: string;
-  ttlSec?: number;
-}) {
-  return await fetch(`http://127.0.0.1:${params.port}/v1/pairings/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${params.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      channel: params.channel,
-      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-      ...(params.ttlSec ? { ttlSec: params.ttlSec } : {}),
-    }),
   });
 }
 
@@ -2685,9 +2666,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "telegram",
       sessionKey: "agent:main:telegram:group:-100777:topic:2",
       ttlSec: 120,
@@ -2878,9 +2860,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "telegram",
       ttlSec: 120,
     });
@@ -3354,9 +3337,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "discord",
       ttlSec: 120,
     });
@@ -3640,9 +3624,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "discord",
       sessionKey: `agent:main:discord:channel:${guildChannelId}`,
       ttlSec: 120,
@@ -3811,9 +3796,10 @@ describe("mux server", () => {
     });
     expect(initialClaim.status).toBe(200);
 
-    const switchTokenResponse = await createPairingToken({
+    const switchTokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-b-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-b",
       channel: "telegram",
       sessionKey: "agent:main:telegram:group:-100888:switch",
       ttlSec: 120,
@@ -4034,9 +4020,10 @@ describe("mux server", () => {
     });
     expect(initialClaim.status).toBe(200);
 
-    const switchTokenResponse = await createPairingToken({
+    const switchTokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-b-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-b",
       channel: "discord",
       sessionKey: "dc:dm:4242:switch",
       ttlSec: 120,
@@ -4275,9 +4262,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "discord",
       sessionKey: "dc:dm:9090",
       ttlSec: 120,
@@ -4309,9 +4297,10 @@ describe("mux server", () => {
       ]),
     });
 
-    const firstToken = await createPairingToken({
+    const firstToken = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "discord",
       sessionKey: "dc:dm:777777",
       ttlSec: 120,
@@ -4323,9 +4312,10 @@ describe("mux server", () => {
       token: expect.stringMatching(/^mpt_/),
     });
 
-    const secondToken = await createPairingToken({
+    const secondToken = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-b-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-b",
       channel: "discord",
       sessionKey: "dc:dm:777777",
       ttlSec: 120,
@@ -4445,9 +4435,10 @@ describe("mux server", () => {
       },
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "discord",
       sessionKey: "dc:dm:9090",
       ttlSec: 120,
@@ -4497,9 +4488,10 @@ describe("mux server", () => {
       tenantsJson: JSON.stringify([{ id: "tenant-a", name: "Tenant A", apiKey: "tenant-a-key" }]),
     });
 
-    const tokenResponse = await createPairingToken({
+    const tokenResponse = await createAdminPairingToken({
       port: server.port,
-      apiKey: "tenant-a-key",
+      adminToken: DEFAULT_ADMIN_TOKEN,
+      openclawId: "tenant-a",
       channel: "whatsapp",
       sessionKey: "agent:main:whatsapp:direct:+15550001111",
       ttlSec: 120,

@@ -6561,25 +6561,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && pathname === "/v1/pairings/token") {
-      const body = await readBody<Record<string, unknown>>(req);
-      const channel = normalizeChannel(body.channel);
-      if (!channel) {
-        sendJson(res, 400, { ok: false, error: "channel required" });
-        return;
-      }
-      const sessionKey = readNonEmptyString(body.sessionKey) ?? undefined;
-      const ttlSec = readPositiveInt(body.ttlSec);
-      const result = issuePairingTokenForTenant({
-        tenant,
-        channel,
-        sessionKey,
-        ttlSec,
-      });
-      sendJson(res, result.statusCode, result.payload);
-      return;
-    }
-
     if (req.method === "POST" && pathname === "/v1/pairings/claim") {
       const body = await readBody<Record<string, unknown>>(req);
       const code = readNonEmptyString(body.code);

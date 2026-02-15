@@ -9,7 +9,6 @@ This directory contains a standalone TypeScript mux server for staged rollout an
 - Implements `POST /v1/instances/register`
 - Implements `POST /v1/admin/pairings/token`
 - Implements `GET /v1/pairings`
-- Implements `POST /v1/pairings/token`
 - Implements `POST /v1/pairings/claim`
 - Implements `POST /v1/pairings/unbind`
 - Implements `POST /v1/mux/outbound/send`
@@ -356,78 +355,11 @@ Body (advanced: override derived sessionKey):
 }
 ```
 
-Response: same as `POST /v1/pairings/token`.
-
 Notes:
 
 - This is the recommended control-plane API for issuing one-time pairing tokens.
 - Requires `MUX_ADMIN_TOKEN` configured on mux-server.
 - If `inboundUrl` is provided, mux will upsert the OpenClaw inbound target for `openclawId` (useful after DB resets).
-
-### `POST /v1/pairings/token`
-
-Headers:
-
-- `Authorization: Bearer <tenant_api_key_or_runtime_jwt>` (legacy / advanced)
-
-Body (recommended):
-
-```json
-{
-  "channel": "telegram",
-  "ttlSec": 900
-}
-```
-
-Body (advanced: override derived sessionKey):
-
-```json
-{
-  "channel": "telegram",
-  "sessionKey": "agent:main:telegram:group:-100123",
-  "ttlSec": 900
-}
-```
-
-Discord body variant (recommended):
-
-```json
-{
-  "channel": "discord",
-  "ttlSec": 900
-}
-```
-
-Discord body variant (advanced: override derived sessionKey):
-
-```json
-{
-  "channel": "discord",
-  "sessionKey": "agent:main:discord:direct:4242",
-  "ttlSec": 900
-}
-```
-
-Discord token pairing is route-less: mux binds the first incoming Discord route that claims the token (requires Discord Gateway inbound enabled).
-
-WhatsApp body variant (recommended):
-
-```json
-{
-  "channel": "whatsapp",
-  "ttlSec": 900
-}
-```
-
-WhatsApp body variant (advanced: override derived sessionKey):
-
-```json
-{
-  "channel": "whatsapp",
-  "sessionKey": "agent:main:whatsapp:direct:+15550001111",
-  "ttlSec": 900
-}
-```
 
 Response `200`:
 
