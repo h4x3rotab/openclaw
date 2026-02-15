@@ -22,6 +22,9 @@ compose() {
   docker compose -f "${COMPOSE_FILE}" "$@"
 }
 
+# OpenClaw creates a device identity on first boot and persists it under
+# /root/.openclaw/identity/device.json (symlinked to /data/openclaw in the CVM image).
+# We use deviceId as the stable openclawId for mux runtime auth.
 openclaw_id="$(
   compose exec -T openclaw node - <<'NODE'
 const fs = require("fs");
@@ -44,6 +47,8 @@ register_payload="$(jq -nc \
   --arg inboundUrl "${OPENCLAW_INBOUND_INTERNAL}" \
   '{openclawId:$openclawId,inboundUrl:$inboundUrl,inboundTimeoutMs:15000}')"
 
+# Note: OpenClaw already auto-registers with mux on gateway boot, but /v1/instances/register
+# is also the simplest self-contained way for this script to mint a runtime JWT for /v1/pairings/token.
 register_response="$(curl -sS -X POST "${MUX_BASE_URL}/v1/instances/register" \
   -H "Authorization: Bearer ${MUX_REGISTER_KEY}" \
   -H "Content-Type: application/json" \

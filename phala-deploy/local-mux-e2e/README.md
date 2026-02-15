@@ -68,7 +68,8 @@ Generate one-time pairing token:
 What `pair-token.sh` does:
 
 1. Reads `openclawId` from the OpenClaw container device identity.
-2. Calls `POST /v1/instances/register` to mint a runtime JWT.
+   - OpenClaw creates this identity on first boot and persists it at `/root/.openclaw/identity/device.json`.
+2. Calls `POST /v1/instances/register` to mint a runtime JWT (idempotent; OpenClaw also auto-registers on boot).
 3. Calls `POST /v1/pairings/token` using that runtime JWT.
 
 Then redeem token in channel:
