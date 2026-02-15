@@ -383,6 +383,33 @@ async function getAdminWhatsAppHealth(params: { port: number; adminToken: string
   });
 }
 
+async function createAdminPairingToken(params: {
+  port: number;
+  adminToken: string;
+  openclawId: string;
+  inboundUrl?: string;
+  inboundTimeoutMs?: number;
+  channel: string;
+  sessionKey?: string;
+  ttlSec?: number;
+}) {
+  return await fetch(`http://127.0.0.1:${params.port}/v1/admin/pairings/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.adminToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      openclawId: params.openclawId,
+      channel: params.channel,
+      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+      ...(params.ttlSec ? { ttlSec: params.ttlSec } : {}),
+      ...(params.inboundUrl ? { inboundUrl: params.inboundUrl } : {}),
+      ...(params.inboundTimeoutMs ? { inboundTimeoutMs: params.inboundTimeoutMs } : {}),
+    }),
+  });
+}
+
 async function registerInstance(params: {
   port: number;
   registerKey: string;
@@ -463,6 +490,41 @@ describe("mux server", () => {
       alg: "EdDSA",
     });
     expect(typeof body.keys?.[0]?.kid).toBe("string");
+  });
+
+  test("admin pairing token endpoint requires admin auth and issues token (control-plane flow)", async () => {
+    const server = await startServer({
+      extraEnv: {
+        MUX_ADMIN_TOKEN: "admin-token-1",
+      },
+    });
+
+    const unauthorized = await fetch(`http://127.0.0.1:${server.port}/v1/admin/pairings/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        openclawId: "oc-1",
+        channel: "telegram",
+        ttlSec: 60,
+      }),
+    });
+    expect(unauthorized.status).toBe(401);
+    expect(await unauthorized.json()).toEqual({ ok: false, error: "unauthorized" });
+
+    const issued = await createAdminPairingToken({
+      port: server.port,
+      adminToken: "admin-token-1",
+      openclawId: "oc-1",
+      inboundUrl: "http://127.0.0.1:18789/v1/mux/inbound",
+      inboundTimeoutMs: 5_000,
+      channel: "telegram",
+      ttlSec: 60,
+    });
+    expect(issued.status).toBe(200);
+    const body = (await issued.json()) as { ok?: unknown; token?: unknown; expiresAtMs?: unknown };
+    expect(body.ok).toBe(true);
+    expect(typeof body.token).toBe("string");
+    expect(typeof body.expiresAtMs).toBe("number");
   });
 
   test("runtime jwt auth enforces openclaw identity on outbound endpoints", async () => {

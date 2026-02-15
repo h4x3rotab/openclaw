@@ -7,6 +7,7 @@ This directory contains a standalone TypeScript mux server for staged rollout an
 - Implements `GET /health`
 - Implements `GET /.well-known/jwks.json`
 - Implements `POST /v1/instances/register`
+- Implements `POST /v1/admin/pairings/token`
 - Implements `GET /v1/pairings`
 - Implements `POST /v1/pairings/token`
 - Implements `POST /v1/pairings/claim`
@@ -48,7 +49,7 @@ This repo now has 3 mux-related pieces:
 
 - OpenClaw outbound client
 - Calls `POST /v1/instances/register` to mint a runtime JWT
-- Uses that runtime JWT for `/v1/mux/outbound/send` and `/v1/pairings/*`
+- Uses that runtime JWT for `/v1/mux/outbound/send`
 
 3. `mux-server/src/server.ts`
 
@@ -87,7 +88,7 @@ node --import tsx mux-server/src/server.ts
 - `MUX_JWT_PRIVATE_KEY` (optional): Ed25519 private key PEM for stable JWT signing across restarts.
 - `MUX_API_KEY` (optional, legacy): seeds a single API-key tenant (`tenant-default`).
 - `MUX_TENANTS_JSON` (optional, legacy): JSON array for multi-tenant API-key auth seed.
-- `MUX_ADMIN_TOKEN` (optional): enables admin-only endpoints (for example `GET /v1/admin/whatsapp/health`).
+- `MUX_ADMIN_TOKEN` (optional): enables admin-only endpoints (for example `POST /v1/admin/pairings/token`, `GET /v1/admin/whatsapp/health`).
 - `MUX_HOST` (default `127.0.0.1`)
 - `MUX_PORT` (default `18891`)
 - `MUX_LOG_PATH` (default `./mux-server/logs/mux-server.log`)
@@ -326,11 +327,48 @@ Notes:
 
 - `sessionKey` is optional. If omitted, a binding is still created and mux will derive canonical session keys from inbound context.
 
+### `POST /v1/admin/pairings/token`
+
+Headers:
+
+- `Authorization: Bearer <mux_admin_token>`
+
+Body (recommended):
+
+```json
+{
+  "openclawId": "<openclawId>",
+  "inboundUrl": "https://<openclaw>/v1/mux/inbound",
+  "inboundTimeoutMs": 15000,
+  "channel": "telegram",
+  "ttlSec": 900
+}
+```
+
+Body (advanced: override derived sessionKey):
+
+```json
+{
+  "openclawId": "<openclawId>",
+  "channel": "telegram",
+  "sessionKey": "agent:main:telegram:group:-100123",
+  "ttlSec": 900
+}
+```
+
+Response: same as `POST /v1/pairings/token`.
+
+Notes:
+
+- This is the recommended control-plane API for issuing one-time pairing tokens.
+- Requires `MUX_ADMIN_TOKEN` configured on mux-server.
+- If `inboundUrl` is provided, mux will upsert the OpenClaw inbound target for `openclawId` (useful after DB resets).
+
 ### `POST /v1/pairings/token`
 
 Headers:
 
-- `Authorization: Bearer <tenant_api_key>`
+- `Authorization: Bearer <tenant_api_key_or_runtime_jwt>` (legacy / advanced)
 
 Body (recommended):
 
@@ -461,7 +499,7 @@ Problem:
 
 Proposal:
 
-- Keep `POST /v1/pairings/token` as a simple "mint a token" API.
+- Keep `POST /v1/admin/pairings/token` as a simple "mint a token" control-plane API.
 - Add a first-class `agentId` (or `agentHint`) parameter and treat it as the pairing target.
 - At claim time (incoming message containing token), derive the canonical session key from `(agentId, inbound route context)`:
   - Telegram topic: `agent:<agentId>:telegram:group:<chatId>:topic:<topicId>`
@@ -681,7 +719,7 @@ sequenceDiagram
   participant OC as OpenClaw gateway (/v1/mux/inbound)
   participant AR as OpenClaw auto-reply
 
-  UI->>MUX: POST /v1/pairings/token (tenant auth)
+  UI->>MUX: POST /v1/admin/pairings/token (admin auth)
   MUX-->>UI: token + deepLink
   UI->>TG: open deeplink (/start <token>)
   MUX->>TG: getUpdates(offset=last_offset+1)
@@ -725,10 +763,8 @@ sequenceDiagram
   participant OC as OpenClaw gateway (/v1/mux/inbound)
   participant OUT as WA send (sendMessageWhatsApp)
 
-  UI->>OC: Request pairing link in dashboard chat
-  OC->>MUX: POST /v1/pairings/token
-  MUX-->>OC: token
-  OC-->>UI: pairing deep link
+  UI->>MUX: POST /v1/admin/pairings/token (admin auth)
+  MUX-->>UI: token + deepLink
   UI->>WA: User sends token in target chat
   WA->>WL: inbound event
   WL->>DB: enqueue snapshot (dedupe by account/chat/message id)

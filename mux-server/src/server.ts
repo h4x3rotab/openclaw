@@ -42,7 +42,7 @@ type TenantIdentity = {
   id: string;
   name: string;
   authToken: string;
-  authKind: "api-key" | "runtime-jwt";
+  authKind: "api-key" | "runtime-jwt" | "admin";
 };
 
 type PairingCodeSeed = {
@@ -597,6 +597,27 @@ const stmtUpsertTenantByRegister = db.prepare(`
   ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     api_key_hash = excluded.api_key_hash,
+    status = 'active',
+    inbound_url = excluded.inbound_url,
+    inbound_token = NULL,
+    inbound_timeout_ms = excluded.inbound_timeout_ms,
+    updated_at_ms = excluded.updated_at_ms
+`);
+
+const stmtUpsertTenantInboundTargetByAdmin = db.prepare(`
+  INSERT INTO tenants (
+    id,
+    name,
+    api_key_hash,
+    status,
+    inbound_url,
+    inbound_token,
+    inbound_timeout_ms,
+    created_at_ms,
+    updated_at_ms
+  )
+  VALUES (?, ?, ?, 'active', ?, NULL, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
     status = 'active',
     inbound_url = excluded.inbound_url,
     inbound_token = NULL,
@@ -6463,6 +6484,68 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       sendJson(res, 200, { ok: true, whatsapp: getWhatsAppCredentialHealth() });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/admin/pairings/token") {
+      if (!muxAdminToken) {
+        sendJson(res, 404, { ok: false, error: "not found" });
+        return;
+      }
+      if (!isAdminAuthorized(req)) {
+        sendJson(res, 401, { ok: false, error: "unauthorized" });
+        return;
+      }
+      const body = await readBody<Record<string, unknown>>(req);
+      const openclawId = readNonEmptyString(body.openclawId);
+      if (!openclawId) {
+        sendJson(res, 400, { ok: false, error: "openclawId required" });
+        return;
+      }
+      const channel = normalizeChannel(body.channel);
+      if (!channel) {
+        sendJson(res, 400, { ok: false, error: "channel required" });
+        return;
+      }
+      const sessionKey = readNonEmptyString(body.sessionKey) ?? undefined;
+      const ttlSec = readPositiveInt(body.ttlSec);
+
+      const inboundUrl = readNonEmptyString(body.inboundUrl);
+      const inboundTimeoutMs = readPositiveInt(body.inboundTimeoutMs);
+      if (inboundUrl) {
+        const now = Date.now();
+        const syntheticApiKey = `instance:${openclawId}`;
+        try {
+          stmtUpsertTenantInboundTargetByAdmin.run(
+            openclawId,
+            openclawId,
+            hashApiKey(syntheticApiKey),
+            inboundUrl,
+            inboundTimeoutMs ?? 15_000,
+            now,
+            now,
+          );
+        } catch (error) {
+          if (String(error).includes("UNIQUE constraint failed: tenants.api_key_hash")) {
+            sendJson(res, 409, { ok: false, error: "instance id conflict" });
+            return;
+          }
+          throw error;
+        }
+      }
+
+      const result = issuePairingTokenForTenant({
+        tenant: {
+          id: openclawId,
+          name: openclawId,
+          authToken: muxAdminToken,
+          authKind: "admin",
+        },
+        channel,
+        sessionKey,
+        ttlSec,
+      });
+      sendJson(res, result.statusCode, result.payload);
       return;
     }
 
