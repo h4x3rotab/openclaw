@@ -375,58 +375,6 @@ async function createPairingToken(params: {
   });
 }
 
-async function getInboundTarget(params: { port: number; apiKey: string }) {
-  return await fetch(`http://127.0.0.1:${params.port}/v1/tenant/inbound-target`, {
-    headers: {
-      Authorization: `Bearer ${params.apiKey}`,
-    },
-  });
-}
-
-async function setInboundTarget(params: {
-  port: number;
-  apiKey: string;
-  inboundUrl: string;
-  inboundTimeoutMs?: number;
-}) {
-  return await fetch(`http://127.0.0.1:${params.port}/v1/tenant/inbound-target`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${params.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inboundUrl: params.inboundUrl,
-      ...(params.inboundTimeoutMs ? { inboundTimeoutMs: params.inboundTimeoutMs } : {}),
-    }),
-  });
-}
-
-async function bootstrapTenant(params: {
-  port: number;
-  adminToken: string;
-  tenantId: string;
-  name?: string;
-  apiKey: string;
-  inboundUrl: string;
-  inboundTimeoutMs?: number;
-}) {
-  return await fetch(`http://127.0.0.1:${params.port}/v1/admin/tenants/bootstrap`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${params.adminToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      tenantId: params.tenantId,
-      ...(params.name ? { name: params.name } : {}),
-      apiKey: params.apiKey,
-      inboundUrl: params.inboundUrl,
-      ...(params.inboundTimeoutMs ? { inboundTimeoutMs: params.inboundTimeoutMs } : {}),
-    }),
-  });
-}
-
 async function getAdminWhatsAppHealth(params: { port: number; adminToken: string }) {
   return await fetch(`http://127.0.0.1:${params.port}/v1/admin/whatsapp/health`, {
     headers: {
@@ -663,59 +611,6 @@ describe("mux server", () => {
     expect(await fallback.json()).toEqual({ ok: false, error: "unauthorized" });
   });
 
-  test("admin bootstrap registers tenant with shared-key inbound auth", async () => {
-    const server = await startServer({
-      extraEnv: {
-        MUX_ADMIN_TOKEN: "admin-secret",
-      },
-      tenantsJson: JSON.stringify([{ id: "seed", name: "Seed", apiKey: "seed-key" }]),
-    });
-
-    const bootstrap = await bootstrapTenant({
-      port: server.port,
-      adminToken: "admin-secret",
-      tenantId: "tenant-cp-1",
-      name: "Tenant CP 1",
-      apiKey: "tenant-cp-key",
-      inboundUrl: "http://127.0.0.1:18789/v1/mux/inbound",
-      inboundTimeoutMs: 12_000,
-    });
-    expect(bootstrap.status).toBe(200);
-    await expect(bootstrap.json()).resolves.toMatchObject({
-      ok: true,
-      tenantId: "tenant-cp-1",
-      inboundUrl: "http://127.0.0.1:18789/v1/mux/inbound",
-      inboundTimeoutMs: 12_000,
-    });
-
-    const tenantProbe = await fetch(`http://127.0.0.1:${server.port}/v1/mux/outbound/send`, {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer tenant-cp-key",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestPayload("probe")),
-    });
-    expect(tenantProbe.status).toBe(403);
-    await expect(tenantProbe.json()).resolves.toMatchObject({
-      ok: false,
-      error: "route not bound",
-      code: "ROUTE_NOT_BOUND",
-    });
-
-    const inboundTarget = await getInboundTarget({
-      port: server.port,
-      apiKey: "tenant-cp-key",
-    });
-    expect(inboundTarget.status).toBe(200);
-    await expect(inboundTarget.json()).resolves.toMatchObject({
-      ok: true,
-      configured: true,
-      inboundUrl: "http://127.0.0.1:18789/v1/mux/inbound",
-      inboundTimeoutMs: 12_000,
-    });
-  });
-
   test("admin whatsapp health endpoint requires admin auth", async () => {
     const server = await startServer({
       extraEnv: {
@@ -777,111 +672,7 @@ describe("mux server", () => {
     }
   });
 
-  test("tenant inbound target update uses runtime jwt for inbound auth", async () => {
-    const inboundRequests: Array<{
-      authorization: string | undefined;
-      openclawIdHeader: string | undefined;
-      payload: Record<string, unknown>;
-    }> = [];
-    const inbound = await startHttpServer(async (req, res) => {
-      if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      const payload = await readJsonBody(req);
-      const authorization =
-        typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
-      const openclawIdHeader =
-        typeof req.headers["x-openclaw-id"] === "string" ? req.headers["x-openclaw-id"] : undefined;
-      inboundRequests.push({ authorization, openclawIdHeader, payload });
-      res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true }));
-    });
-
-    let releaseUpdate = false;
-    const telegramApi = await startHttpServer(async (req, res) => {
-      if (req.method !== "POST" || req.url !== "/botdummy-token/getUpdates") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      const body = await readJsonBody(req);
-      const offset = typeof body.offset === "number" ? Number(body.offset) : 0;
-      const result =
-        releaseUpdate && offset <= 700
-          ? [
-              {
-                update_id: 700,
-                message: {
-                  message_id: 701,
-                  date: 1_700_000_111,
-                  text: "default shared key target",
-                  from: { id: 1234 },
-                  chat: { id: -100558, type: "supergroup" },
-                },
-              },
-            ]
-          : [];
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true, result }));
-    });
-
-    const server = await startServer({
-      tenantsJson: JSON.stringify([{ id: "tenant-a", name: "Tenant A", apiKey: "tenant-a-key" }]),
-      pairingCodesJson: JSON.stringify([
-        {
-          code: "PAIR-SHARED-TARGET-1",
-          channel: "telegram",
-          routeKey: "telegram:default:chat:-100558",
-          scope: "chat",
-        },
-      ]),
-      extraEnv: {
-        MUX_TELEGRAM_API_BASE_URL: telegramApi.url,
-        MUX_TELEGRAM_POLL_TIMEOUT_SEC: "1",
-        MUX_TELEGRAM_POLL_RETRY_MS: "50",
-        MUX_TELEGRAM_BOOTSTRAP_LATEST: "false",
-      },
-    });
-
-    const claim = await claimPairing({
-      port: server.port,
-      apiKey: "tenant-a-key",
-      code: "PAIR-SHARED-TARGET-1",
-      sessionKey: "agent:main:telegram:group:-100558",
-    });
-    expect(claim.status).toBe(200);
-
-    const updateTarget = await setInboundTarget({
-      port: server.port,
-      apiKey: "tenant-a-key",
-      inboundUrl: `${inbound.url}/v1/mux/inbound`,
-      inboundTimeoutMs: 2_000,
-    });
-    expect(updateTarget.status).toBe(200);
-    await expect(updateTarget.json()).resolves.toMatchObject({
-      ok: true,
-      inboundUrl: `${inbound.url}/v1/mux/inbound`,
-    });
-
-    releaseUpdate = true;
-    await waitForCondition(
-      () => inboundRequests.length >= 1,
-      8_000,
-      "timed out waiting for inbound target forward",
-    );
-    expectInboundJwtAuth(
-      {
-        authorization: inboundRequests[0]?.authorization,
-        openclawIdHeader: inboundRequests[0]?.openclawIdHeader,
-      },
-      "tenant-a",
-    );
-    expect(inboundRequests[0]?.payload.body).toBe("default shared key target");
-  }, 15_000);
-
-  test("updates tenant inbound target at runtime and forwards new inbound traffic to updated target", async () => {
+  test("instance register updates inbound target and forwards to latest inbound url", async () => {
     const inboundARequests: Array<{
       authorization: string | undefined;
       openclawIdHeader: string | undefined;
@@ -892,6 +683,7 @@ describe("mux server", () => {
       openclawIdHeader: string | undefined;
       payload: Record<string, unknown>;
     }> = [];
+
     const inboundA = await startHttpServer(async (req, res) => {
       if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
         res.writeHead(404);
@@ -907,6 +699,7 @@ describe("mux server", () => {
       res.writeHead(202, { "content-type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: true }));
     });
+
     const inboundB = await startHttpServer(async (req, res) => {
       if (req.method !== "POST" || req.url !== "/v1/mux/inbound") {
         res.writeHead(404);
@@ -966,15 +759,6 @@ describe("mux server", () => {
     });
 
     const server = await startServer({
-      tenantsJson: JSON.stringify([
-        {
-          id: "tenant-a",
-          name: "Tenant A",
-          apiKey: "tenant-a-key",
-          inboundUrl: `${inboundA.url}/v1/mux/inbound`,
-          inboundTimeoutMs: 2_000,
-        },
-      ]),
       pairingCodesJson: JSON.stringify([
         {
           code: "PAIR-ROTATE-TARGET-1",
@@ -984,6 +768,7 @@ describe("mux server", () => {
         },
       ]),
       extraEnv: {
+        MUX_REGISTER_KEY: "register-shared-key",
         MUX_TELEGRAM_API_BASE_URL: telegramApi.url,
         MUX_TELEGRAM_POLL_TIMEOUT_SEC: "1",
         MUX_TELEGRAM_POLL_RETRY_MS: "50",
@@ -991,21 +776,31 @@ describe("mux server", () => {
       },
     });
 
-    const claim = await claimPairing({
+    const registeredA = await registerInstance({
       port: server.port,
-      apiKey: "tenant-a-key",
-      code: "PAIR-ROTATE-TARGET-1",
-      sessionKey: "agent:main:telegram:group:-100557",
+      registerKey: "register-shared-key",
+      openclawId: "tenant-a",
+      inboundUrl: `${inboundA.url}/v1/mux/inbound`,
+      inboundTimeoutMs: 2_000,
+    });
+    expect(registeredA.status).toBe(200);
+    const registerBody = (await registeredA.json()) as { runtimeToken?: unknown };
+    const runtimeToken = toSafeString(registerBody.runtimeToken);
+    expect(runtimeToken).toBeTruthy();
+
+    const claim = await fetch(`http://127.0.0.1:${server.port}/v1/pairings/claim`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${runtimeToken}`,
+        "X-OpenClaw-Id": "tenant-a",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        code: "PAIR-ROTATE-TARGET-1",
+        sessionKey: "agent:main:telegram:group:-100557",
+      }),
     });
     expect(claim.status).toBe(200);
-
-    const getBefore = await getInboundTarget({ port: server.port, apiKey: "tenant-a-key" });
-    expect(getBefore.status).toBe(200);
-    await expect(getBefore.json()).resolves.toMatchObject({
-      ok: true,
-      configured: true,
-      inboundUrl: `${inboundA.url}/v1/mux/inbound`,
-    });
 
     releaseFirst = true;
     await waitForCondition(
@@ -1022,25 +817,14 @@ describe("mux server", () => {
     );
     expect(inboundARequests[0]?.payload.body).toBe("first target");
 
-    const updateTarget = await setInboundTarget({
+    const registeredB = await registerInstance({
       port: server.port,
-      apiKey: "tenant-a-key",
+      registerKey: "register-shared-key",
+      openclawId: "tenant-a",
       inboundUrl: `${inboundB.url}/v1/mux/inbound`,
       inboundTimeoutMs: 2_000,
     });
-    expect(updateTarget.status).toBe(200);
-    await expect(updateTarget.json()).resolves.toMatchObject({
-      ok: true,
-      inboundUrl: `${inboundB.url}/v1/mux/inbound`,
-    });
-
-    const getAfter = await getInboundTarget({ port: server.port, apiKey: "tenant-a-key" });
-    expect(getAfter.status).toBe(200);
-    await expect(getAfter.json()).resolves.toMatchObject({
-      ok: true,
-      configured: true,
-      inboundUrl: `${inboundB.url}/v1/mux/inbound`,
-    });
+    expect(registeredB.status).toBe(200);
 
     releaseSecond = true;
     await waitForCondition(

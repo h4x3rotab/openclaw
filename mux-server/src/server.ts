@@ -611,35 +611,6 @@ const stmtSelectTenantInboundTargetById = db.prepare(`
   LIMIT 1
 `);
 
-const stmtUpdateTenantInboundTargetById = db.prepare(`
-  UPDATE tenants
-  SET inbound_url = ?, inbound_token = ?, inbound_timeout_ms = ?, updated_at_ms = ?
-  WHERE id = ? AND status = 'active'
-`);
-
-const stmtUpsertTenantByAdmin = db.prepare(`
-  INSERT INTO tenants (
-    id,
-    name,
-    api_key_hash,
-    status,
-    inbound_url,
-    inbound_token,
-    inbound_timeout_ms,
-    created_at_ms,
-    updated_at_ms
-  )
-  VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
-  ON CONFLICT(id) DO UPDATE SET
-    name = excluded.name,
-    api_key_hash = excluded.api_key_hash,
-    status = 'active',
-    inbound_url = excluded.inbound_url,
-    inbound_token = excluded.inbound_token,
-    inbound_timeout_ms = excluded.inbound_timeout_ms,
-    updated_at_ms = excluded.updated_at_ms
-`);
-
 const stmtCountActiveTenantInboundTargets = db.prepare(`
   SELECT COUNT(*) AS count
   FROM tenants
@@ -1180,18 +1151,28 @@ async function buildInboundAuthHeaders(
 function resolveTenantSeeds(): TenantSeed[] {
   const raw = process.env.MUX_TENANTS_JSON?.trim();
   if (!raw) {
-    const apiKey = process.env.MUX_API_KEY || "outbound-secret";
-    const inboundUrl = readNonEmptyString(process.env.MUX_OPENCLAW_INBOUND_URL) ?? undefined;
-    const inboundTimeoutMs = readPositiveInt(process.env.MUX_OPENCLAW_INBOUND_TIMEOUT_MS) ?? 15_000;
-    return [
-      {
-        id: "tenant-default",
-        name: "default",
-        apiKey,
-        inboundUrl,
-        inboundTimeoutMs,
-      },
-    ];
+    const apiKey = readNonEmptyString(process.env.MUX_API_KEY);
+    if (apiKey) {
+      const inboundUrl = readNonEmptyString(process.env.MUX_OPENCLAW_INBOUND_URL) ?? undefined;
+      const inboundTimeoutMs =
+        readPositiveInt(process.env.MUX_OPENCLAW_INBOUND_TIMEOUT_MS) ?? 15_000;
+      return [
+        {
+          id: "tenant-default",
+          name: "default",
+          apiKey,
+          inboundUrl,
+          inboundTimeoutMs,
+        },
+      ];
+    }
+
+    // Instance-centric mode: tenants are created via POST /v1/instances/register.
+    if (muxRegisterKey) {
+      return [];
+    }
+
+    throw new Error("Set MUX_API_KEY, MUX_TENANTS_JSON, or MUX_REGISTER_KEY");
   }
 
   const parsed = JSON.parse(raw) as unknown;
@@ -4085,19 +4066,6 @@ function listPairingsForTenant(tenant: TenantIdentity) {
   };
 }
 
-function getInboundTargetForTenant(tenant: TenantIdentity) {
-  const target = resolveTenantInboundTarget(tenant.id);
-  return {
-    statusCode: 200,
-    payload: {
-      ok: true,
-      configured: Boolean(target),
-      inboundUrl: target?.url ?? null,
-      inboundTimeoutMs: target?.timeoutMs ?? null,
-    },
-  };
-}
-
 async function registerOpenClawInstance(input: {
   openclawId?: unknown;
   inboundUrl?: unknown;
@@ -4150,106 +4118,6 @@ async function registerOpenClawInstance(input: {
       runtimeToken,
       tokenType: "Bearer",
       expiresAtMs: now + runtimeTokenTtlSec * 1_000,
-    },
-  };
-}
-
-function setInboundTargetForTenant(
-  tenant: TenantIdentity,
-  input: { inboundUrl?: unknown; inboundTimeoutMs?: unknown },
-) {
-  const inboundUrl = readNonEmptyString(input.inboundUrl);
-  if (!inboundUrl) {
-    return {
-      statusCode: 400,
-      payload: { ok: false, error: "inboundUrl is required" },
-    };
-  }
-  const inboundTimeoutMs = readPositiveInt(input.inboundTimeoutMs) ?? 15_000;
-  const now = Date.now();
-  const update = stmtUpdateTenantInboundTargetById.run(
-    inboundUrl,
-    null,
-    inboundTimeoutMs,
-    now,
-    tenant.id,
-  );
-  if (update.changes === 0) {
-    return {
-      statusCode: 404,
-      payload: { ok: false, error: "tenant not found or inactive" },
-    };
-  }
-  writeAuditLog(tenant.id, "tenant_inbound_target_updated", { inboundUrl, inboundTimeoutMs }, now);
-  return {
-    statusCode: 200,
-    payload: {
-      ok: true,
-      inboundUrl,
-      inboundTimeoutMs,
-    },
-  };
-}
-
-function bootstrapTenantByAdmin(input: {
-  tenantId?: unknown;
-  name?: unknown;
-  apiKey?: unknown;
-  inboundUrl?: unknown;
-  inboundTimeoutMs?: unknown;
-}) {
-  const tenantId = readNonEmptyString(input.tenantId);
-  const apiKey = readNonEmptyString(input.apiKey);
-  const inboundUrl = readNonEmptyString(input.inboundUrl);
-  if (!tenantId || !apiKey || !inboundUrl) {
-    return {
-      statusCode: 400,
-      payload: { ok: false, error: "tenantId, apiKey, and inboundUrl are required" },
-    };
-  }
-  const name = readNonEmptyString(input.name) ?? tenantId;
-  const inboundTimeoutMs = readPositiveInt(input.inboundTimeoutMs) ?? 15_000;
-  const now = Date.now();
-  try {
-    stmtUpsertTenantByAdmin.run(
-      tenantId,
-      name,
-      hashApiKey(apiKey),
-      inboundUrl,
-      null,
-      inboundTimeoutMs,
-      now,
-      now,
-    );
-  } catch (error) {
-    const errText = String(error);
-    if (errText.includes("UNIQUE constraint failed: tenants.api_key_hash")) {
-      return {
-        statusCode: 409,
-        payload: { ok: false, error: "api key already used by another tenant" },
-      };
-    }
-    throw error;
-  }
-
-  writeAuditLog(
-    tenantId,
-    "tenant_bootstrap_upserted",
-    {
-      name,
-      inboundUrl,
-      inboundTimeoutMs,
-    },
-    now,
-  );
-  return {
-    statusCode: 200,
-    payload: {
-      ok: true,
-      tenantId,
-      name,
-      inboundUrl,
-      inboundTimeoutMs,
     },
   };
 }
@@ -6585,27 +6453,6 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && pathname === "/v1/admin/tenants/bootstrap") {
-      if (!muxAdminToken) {
-        sendJson(res, 404, { ok: false, error: "not found" });
-        return;
-      }
-      if (!isAdminAuthorized(req)) {
-        sendJson(res, 401, { ok: false, error: "unauthorized" });
-        return;
-      }
-      const body = await readBody<Record<string, unknown>>(req);
-      const result = bootstrapTenantByAdmin({
-        tenantId: body.tenantId,
-        name: body.name,
-        apiKey: body.apiKey,
-        inboundUrl: body.inboundUrl,
-        inboundTimeoutMs: body.inboundTimeoutMs,
-      });
-      sendJson(res, result.statusCode, result.payload);
-      return;
-    }
-
     if (req.method === "GET" && pathname === "/v1/admin/whatsapp/health") {
       if (!muxAdminToken) {
         sendJson(res, 404, { ok: false, error: "not found" });
@@ -6671,22 +6518,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const result = unbindPairingForTenant(tenant, bindingId);
-      sendJson(res, result.statusCode, result.payload);
-      return;
-    }
-
-    if (req.method === "GET" && pathname === "/v1/tenant/inbound-target") {
-      const result = getInboundTargetForTenant(tenant);
-      sendJson(res, result.statusCode, result.payload);
-      return;
-    }
-
-    if (req.method === "POST" && pathname === "/v1/tenant/inbound-target") {
-      const body = await readBody<Record<string, unknown>>(req);
-      const result = setInboundTargetForTenant(tenant, {
-        inboundUrl: body.inboundUrl,
-        inboundTimeoutMs: body.inboundTimeoutMs,
-      });
       sendJson(res, result.statusCode, result.payload);
       return;
     }
